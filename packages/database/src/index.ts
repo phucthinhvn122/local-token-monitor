@@ -8,6 +8,7 @@ import type {
   ModelPricing,
   ProviderQuotaSnapshot,
   ProjectInfo,
+  QuotaStatus,
   ThirdPartyProviderConfig,
   TokenUsageEvent,
   UsageFilters
@@ -531,6 +532,73 @@ export class MonitorDatabase {
         });
       }
     }
+  }
+
+  saveQuotaStatus(status: QuotaStatus): void {
+    const id = randomUUID();
+    this.db.prepare(
+      `INSERT INTO nxtcodex_quota_history
+       (id, provider, key_id, status, total, used, remaining, unit, reset_at, seconds_until_reset, checked_at, source, raw_headers_json, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id,
+      status.provider,
+      status.keyId ?? null,
+      status.status,
+      status.total ?? null,
+      status.used ?? null,
+      status.remaining ?? null,
+      status.unit,
+      status.resetAt ?? null,
+      status.secondsUntilReset ?? null,
+      status.checkedAt,
+      status.source,
+      status.rawHeaders ? JSON.stringify(status.rawHeaders) : null,
+      status.error ?? null
+    );
+  }
+
+  getLatestQuotaStatus(): QuotaStatus | null {
+    const row = this.db.prepare(
+      `SELECT * FROM nxtcodex_quota_history ORDER BY checked_at DESC LIMIT 1`
+    ).get() as Row | undefined;
+    if (!row) return null;
+    return {
+      provider: "nxtcodex",
+      keyId: row.key_id ? String(row.key_id) : undefined,
+      status: row.status as QuotaStatus["status"],
+      total: row.total == null ? null : Number(row.total),
+      used: row.used == null ? null : Number(row.used),
+      remaining: row.remaining == null ? null : Number(row.remaining),
+      unit: row.unit as QuotaStatus["unit"],
+      resetAt: row.reset_at ? String(row.reset_at) : null,
+      secondsUntilReset: row.seconds_until_reset == null ? null : Number(row.seconds_until_reset),
+      checkedAt: String(row.checked_at),
+      source: row.source as QuotaStatus["source"],
+      rawHeaders: row.raw_headers_json ? JSON.parse(String(row.raw_headers_json)) : undefined,
+      error: row.error ? String(row.error) : undefined
+    };
+  }
+
+  getQuotaHistory(limit = 50): QuotaStatus[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM nxtcodex_quota_history ORDER BY checked_at DESC LIMIT ?`
+    ).all(limit) as Row[];
+    return rows.map((row) => ({
+      provider: "nxtcodex",
+      keyId: row.key_id ? String(row.key_id) : undefined,
+      status: row.status as QuotaStatus["status"],
+      total: row.total == null ? null : Number(row.total),
+      used: row.used == null ? null : Number(row.used),
+      remaining: row.remaining == null ? null : Number(row.remaining),
+      unit: row.unit as QuotaStatus["unit"],
+      resetAt: row.reset_at ? String(row.reset_at) : null,
+      secondsUntilReset: row.seconds_until_reset == null ? null : Number(row.seconds_until_reset),
+      checkedAt: String(row.checked_at),
+      source: row.source as QuotaStatus["source"],
+      rawHeaders: row.raw_headers_json ? JSON.parse(String(row.raw_headers_json)) : undefined,
+      error: row.error ? String(row.error) : undefined
+    }));
   }
 
   close(): void {

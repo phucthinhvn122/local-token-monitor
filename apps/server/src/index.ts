@@ -13,6 +13,7 @@ import { ClaudeAdapter } from "@ltm/provider-claude";
 import {
   bundledProviderConfigs,
   createQuotaAdapter,
+  fetchNxtCodexQuotaStatus,
   providerResearch
 } from "@ltm/provider-quota";
 import { safeError } from "@ltm/core";
@@ -135,6 +136,83 @@ export async function startServer(options: { port?: number; host?: string; openB
     localOnly: host === "127.0.0.1"
   }));
 
+  app.get("/api/quota", async () => {
+    let latest = database.getLatestQuotaStatus();
+    if (!latest) {
+      const providerNetworkEnabled =
+        process.env.LTM_PROVIDER_NETWORK === "true" ||
+        database.getSettings().providerNetworkEnabled;
+      latest = await fetchNxtCodexQuotaStatus({ allowNetwork: providerNetworkEnabled });
+      database.saveQuotaStatus(latest);
+    }
+    return latest;
+  });
+
+  app.post("/api/quota/refresh", async () => {
+    const providerNetworkEnabled =
+      process.env.LTM_PROVIDER_NETWORK === "true" ||
+      database.getSettings().providerNetworkEnabled;
+    const quota = await fetchNxtCodexQuotaStatus({ allowNetwork: providerNetworkEnabled });
+    database.saveQuotaStatus(quota);
+    publish({
+      type: "provider-quota",
+      provider: "nxtcodex",
+      message: `NXTCODEX: ${quota.status}`,
+      timestamp: quota.checkedAt
+    });
+    return quota;
+  });
+
+  app.get("/api/quota/history", async (request) => {
+    const limit = Number((request.query as { limit?: string })?.limit || 50);
+    const history = database.getQuotaHistory(limit);
+
+    // Compute consumption stats
+    const valid = [...history]
+      .filter((item) => item.remaining !== null && item.checkedAt)
+      .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime());
+
+    let avgRatePerMinute = 0;
+    let avgRatePerHour = 0;
+    let estimatedDepletionAt: string | null = null;
+    let estimatedSecondsUntilDepletion: number | null = null;
+
+    if (valid.length >= 2) {
+      const first = valid[0];
+      const last = valid[valid.length - 1];
+      const elapsedMs = new Date(last.checkedAt).getTime() - new Date(first.checkedAt).getTime();
+      if (elapsedMs > 0) {
+        let totalConsumed = 0;
+        for (let i = 1; i < valid.length; i++) {
+          const prevRem = valid[i - 1].remaining!;
+          const currRem = valid[i].remaining!;
+          if (currRem < prevRem) {
+            totalConsumed += (prevRem - currRem);
+          }
+        }
+        const elapsedMinutes = elapsedMs / 60_000;
+        avgRatePerMinute = elapsedMinutes > 0 ? Number((totalConsumed / elapsedMinutes).toFixed(2)) : 0;
+        avgRatePerHour = Number((avgRatePerMinute * 60).toFixed(2));
+        if (avgRatePerMinute > 0 && last.remaining !== null && last.remaining > 0) {
+          const minutesRemaining = last.remaining / avgRatePerMinute;
+          estimatedSecondsUntilDepletion = Math.floor(minutesRemaining * 60);
+          estimatedDepletionAt = new Date(Date.now() + estimatedSecondsUntilDepletion * 1000).toISOString();
+        }
+      }
+    }
+
+    return {
+      provider: "nxtcodex",
+      history,
+      stats: {
+        avgRatePerMinute,
+        avgRatePerHour,
+        estimatedDepletionAt,
+        estimatedSecondsUntilDepletion
+      }
+    };
+  });
+
   app.get("/api/status", async () => {
     const diagnostics = await manager.diagnostics().catch((error) => {
       collectorError = safeError(error);
@@ -256,7 +334,7 @@ export async function startServer(options: { port?: number; host?: string; openB
   app.get("/api/usage/breakdown", async (request) => database.breakdown(parseFilters(request)));
   app.get("/api/activity", async () => [...runtimeActivity, ...database.activity()].slice(0, 16));
   app.get("/api/settings", async () => ({ ...database.getSettings(), pricing: database.getPricing() }));
-  app.patch("/api/settings", async (request) => {
+  const handleSettingsUpdate = async (request: FastifyRequest) => {
     const body = SettingsPatchSchema.parse(request.body);
     const updated = database.updateSettings(body as Partial<AppSettings>);
     const collectorSettings = [
@@ -272,7 +350,10 @@ export async function startServer(options: { port?: number; host?: string; openB
     }
     publish({ type: "settings", message: "Settings updated locally", timestamp: new Date().toISOString() });
     return { ...updated, pricing: database.getPricing(), restartRequired: body.port !== undefined || body.allowNetwork !== undefined };
-  });
+  };
+
+  app.patch("/api/settings", handleSettingsUpdate);
+  app.put("/api/settings", handleSettingsUpdate);
   app.put("/api/settings/pricing", async (request) => {
     const pricing = z.array(z.object({
       provider: z.enum(["openai", "anthropic"]),

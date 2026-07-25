@@ -158,13 +158,14 @@ export interface UsageFilters {
 }
 
 export const ThirdPartyProviderIdSchema = z.enum([
+  "nxtcodex",
   "freemodel",
   "nttcodex",
   "openai-compatible",
   "anthropic-compatible"
 ]);
 export const QuotaConfidenceSchema = z.enum(["high", "medium", "low", "none"]);
-export const QuotaStatusSchema = z.enum(["available", "partial", "unavailable", "unverified", "error"]);
+export const SnapshotQuotaStatusSchema = z.enum(["available", "partial", "unavailable", "unverified", "error"]);
 export const QuotaMetricKindSchema = z.enum([
   "requests",
   "tokens",
@@ -207,7 +208,7 @@ export const QuotaEvidenceSchema = z.object({
 export const ProviderQuotaSnapshotSchema = z.object({
   providerId: ThirdPartyProviderIdSchema,
   displayName: z.string().min(1),
-  status: QuotaStatusSchema,
+  status: SnapshotQuotaStatusSchema,
   confidence: QuotaConfidenceSchema,
   partial: z.boolean(),
   fetchedAt: z.string().datetime(),
@@ -242,7 +243,7 @@ const ProviderUrlSchema = z.string().url().refine((value) => {
 
 export const ThirdPartyProviderConfigSchema = z.object({
   id: ThirdPartyProviderIdSchema,
-  adapterId: z.enum(["freemodel", "nttcodex", "openai-compatible", "anthropic-compatible"]),
+  adapterId: z.enum(["nxtcodex", "freemodel", "nttcodex", "openai-compatible", "anthropic-compatible"]),
   displayName: z.string().trim().min(1).max(80),
   baseUrl: ProviderUrlSchema.optional(),
   quotaEndpoint: ProviderUrlSchema.optional(),
@@ -255,13 +256,45 @@ export const ThirdPartyProviderConfigSchema = z.object({
 
 export type ThirdPartyProviderId = z.infer<typeof ThirdPartyProviderIdSchema>;
 export type QuotaConfidence = z.infer<typeof QuotaConfidenceSchema>;
-export type QuotaStatus = z.infer<typeof QuotaStatusSchema>;
+export type SnapshotQuotaStatus = z.infer<typeof SnapshotQuotaStatusSchema>;
 export type QuotaMetricKind = z.infer<typeof QuotaMetricKindSchema>;
 export type QuotaSourceKind = z.infer<typeof QuotaSourceKindSchema>;
 export type QuotaMetric = z.infer<typeof QuotaMetricSchema>;
 export type QuotaEvidence = z.infer<typeof QuotaEvidenceSchema>;
 export type ProviderQuotaSnapshot = z.infer<typeof ProviderQuotaSnapshotSchema>;
 export type ThirdPartyProviderConfig = z.infer<typeof ThirdPartyProviderConfigSchema>;
+
+export interface QuotaStatus {
+  provider: "nxtcodex";
+  keyId?: string;
+  status: "active" | "limited" | "exhausted" | "expired" | "invalid" | "unknown";
+  total: number | null;
+  used: number | null;
+  remaining: number | null;
+  unit: "tokens" | "requests" | "credits" | "unknown";
+  resetAt: string | null;
+  secondsUntilReset: number | null;
+  checkedAt: string;
+  source: "official_api" | "response_headers" | "local_estimate";
+  rawHeaders?: Record<string, string>;
+  error?: string;
+}
+
+export const QuotaStatusSchema = z.object({
+  provider: z.literal("nxtcodex"),
+  keyId: z.string().optional(),
+  status: z.enum(["active", "limited", "exhausted", "expired", "invalid", "unknown"]),
+  total: z.number().nullable(),
+  used: z.number().nullable(),
+  remaining: z.number().nullable(),
+  unit: z.enum(["tokens", "requests", "credits", "unknown"]),
+  resetAt: z.string().nullable(),
+  secondsUntilReset: z.number().nullable(),
+  checkedAt: z.string(),
+  source: z.enum(["official_api", "response_headers", "local_estimate"]),
+  rawHeaders: z.record(z.string()).optional(),
+  error: z.string().optional()
+});
 
 export interface ProviderDetectionResult {
   providerId: ThirdPartyProviderId;

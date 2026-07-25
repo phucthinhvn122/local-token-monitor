@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { QuotaStatus } from "@ltm/shared-types";
 import {
   Activity, BarChart3, Bell, Bot, CircleDollarSign, Clock3, Database,
   Download, EyeOff, FolderGit2, Gauge, HardDrive, Info, LayoutDashboard, Menu,
@@ -80,6 +81,7 @@ function Skeleton({ className = "" }: { className?: string }) {
 function Sidebar({ page, setPage, mobileOpen, close }: { page: string; setPage: (page: string) => void; mobileOpen: boolean; close: () => void }) {
   const items = [
     ["overview", LayoutDashboard, "Overview"],
+    ["nxtcodex", KeyRound, "NXTCODEX Quota"],
     ["projects", FolderGit2, "Projects"],
     ["sessions", TerminalSquare, "Sessions"],
     ["providers", PlugZap, "Third-party"],
@@ -447,6 +449,326 @@ function SettingsDrawer({ settings, close }: { settings: Row; close: () => void 
   </aside></div>;
 }
 
+function NxtCodexQuotaDashboard() {
+  const queryClient = useQueryClient();
+  const [autoRefreshIntervalMs, setAutoRefreshIntervalMs] = useState(60_000);
+  const [now, setNow] = useState(() => Date.now());
+  const [showRawHeaders, setShowRawHeaders] = useState(false);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const quotaQuery = useQuery({
+    queryKey: ["nxtcodex-quota"],
+    queryFn: () => api<QuotaStatus>("/api/quota"),
+    refetchInterval: autoRefreshIntervalMs > 0 ? autoRefreshIntervalMs : false,
+    retry: (failureCount) => failureCount < 3
+  });
+
+  const historyQuery = useQuery({
+    queryKey: ["nxtcodex-history"],
+    queryFn: () => api<{ provider: string; history: QuotaStatus[]; stats: any }>("/api/quota/history"),
+    refetchInterval: autoRefreshIntervalMs > 0 ? autoRefreshIntervalMs : false
+  });
+
+  const refreshMutation = useMutation({
+    mutationFn: () => api<QuotaStatus>("/api/quota/refresh", { method: "POST" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["nxtcodex-quota"] });
+      queryClient.invalidateQueries({ queryKey: ["nxtcodex-history"] });
+    }
+  });
+
+  const quota = quotaQuery.data;
+  const history = historyQuery.data?.history ?? [];
+  const stats = historyQuery.data?.stats ?? {};
+
+  const total = quota?.total ?? null;
+  const remaining = quota?.remaining ?? null;
+  const used = quota?.used ?? (total !== null && remaining !== null ? Math.max(0, total - remaining) : null);
+  const remainingPercent = total && remaining !== null && total > 0 ? (remaining / total) * 100 : null;
+
+  let countdownString = "Không có lịch reset";
+  if (quota?.resetAt) {
+    const resetMs = new Date(quota.resetAt).getTime();
+    const diffMs = resetMs - now;
+    if (diffMs <= 0) {
+      countdownString = "Đã đến thời điểm reset";
+    } else {
+      const totalSec = Math.floor(diffMs / 1000);
+      const days = Math.floor(totalSec / 86400);
+      const hours = Math.floor((totalSec % 86400) / 3600);
+      const minutes = Math.floor((totalSec % 3600) / 60);
+      const seconds = totalSec % 60;
+      countdownString = `${days.toString().padStart(2, "0")}d ${hours.toString().padStart(2, "0")}h ${minutes.toString().padStart(2, "0")}m ${seconds.toString().padStart(2, "0")}s`;
+    }
+  } else if (quota?.secondsUntilReset !== null && quota?.secondsUntilReset !== undefined) {
+    const totalSec = Math.max(0, quota.secondsUntilReset);
+    const days = Math.floor(totalSec / 86400);
+    const hours = Math.floor((totalSec % 86400) / 3600);
+    const minutes = Math.floor((totalSec % 3600) / 60);
+    const seconds = totalSec % 60;
+    countdownString = `${days.toString().padStart(2, "0")}d ${hours.toString().padStart(2, "0")}h ${minutes.toString().padStart(2, "0")}m ${seconds.toString().padStart(2, "0")}s`;
+  }
+
+  let progressBarColor = "#bff56b";
+  let alertThreshold: "5%" | "10%" | "20%" | null = null;
+  if (remainingPercent !== null) {
+    if (remainingPercent <= 5) {
+      progressBarColor = "#ef4444";
+      alertThreshold = "5%";
+    } else if (remainingPercent <= 10) {
+      progressBarColor = "#f97316";
+      alertThreshold = "10%";
+    } else if (remainingPercent <= 20) {
+      progressBarColor = "#eab308";
+      alertThreshold = "20%";
+    }
+  }
+
+  const chartData = [...history]
+    .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime())
+    .map((item) => ({
+      time: new Date(item.checkedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      remaining: item.remaining ?? 0,
+      used: item.used ?? 0,
+      total: item.total ?? 0,
+      source: item.source
+    }));
+
+  return (
+    <div className="nxtcodex-dashboard">
+      <div className="page-heading">
+        <div>
+          <span className="eyebrow">NXTCODEX.COM DASHBOARD</span>
+          <h1>API Key Quota Monitor</h1>
+          <p>Theo dõi hạn ngạch API key, tốc độ sử dụng và thời gian làm mới theo thời gian thực.</p>
+        </div>
+        <div className="heading-actions">
+          <div className="refresh-interval-select">
+            <Clock3 size={15} />
+            <select
+              value={autoRefreshIntervalMs}
+              onChange={(e) => setAutoRefreshIntervalMs(Number(e.target.value))}
+              aria-label="Auto refresh cycle"
+            >
+              <option value={10000}>Tự động: 10 giây</option>
+              <option value={30000}>Tự động: 30 giây</option>
+              <option value={60000}>Tự động: 60 giây (Mặc định)</option>
+              <option value={300000}>Tự động: 5 phút</option>
+              <option value={0}>Tắt tự động cập nhật</option>
+            </select>
+          </div>
+          <button
+            className="primary-button"
+            onClick={() => refreshMutation.mutate()}
+            disabled={refreshMutation.isPending || quotaQuery.isFetching}
+          >
+            <RefreshCw size={15} className={refreshMutation.isPending || quotaQuery.isFetching ? "spin" : ""} />
+            {refreshMutation.isPending || quotaQuery.isFetching ? "Đang kiểm tra…" : "Kiểm tra ngay"}
+          </button>
+        </div>
+      </div>
+
+      {alertThreshold && (
+        <div className={`quota-alert-banner threshold-${alertThreshold.replace("%", "")}`}>
+          <Bell size={18} />
+          <div>
+            <strong>
+              {alertThreshold === "5%"
+                ? "CẢNH BÁO NGUY CẤP: Quota còn lại dưới 5%!"
+                : alertThreshold === "10%"
+                ? "CẢNH BÁO QUAN TRỌNG: Quota còn lại dưới 10%!"
+                : "CẢNH BÁO: Quota còn lại dưới 20%!"}
+            </strong>
+            <span>
+              {alertThreshold === "5%"
+                ? "Tài khoản gần hết quota hoàn toàn. Hãy nạp thêm hoặc đổi key."
+                : alertThreshold === "10%"
+                ? "Quota còn lại rất ít. Cân nhắc gia hạn dịch vụ."
+                : "Hạn ngạch đang giảm xuống mức thấp."}
+            </span>
+          </div>
+        </div>
+      )}
+
+      <div className="metric-grid">
+        <article className="metric-card">
+          <div className="metric-top">
+            <span>Trạng thái Kết nối</span>
+            <KeyRound size={17} />
+          </div>
+          <div className="status-badge-row">
+            <span className={`status-badge state-${quota?.status ?? "unknown"}`}>
+              {(quota?.status ?? "UNKNOWN").toUpperCase()}
+            </span>
+            <span className="source-tag">{quota?.source ?? "local_estimate"}</span>
+          </div>
+          <div className="metric-foot">
+            <span>Key ID: <code>{quota?.keyId ?? "nxt_**** (chưa thiết lập)"}</code></span>
+          </div>
+        </article>
+
+        <article className="metric-card">
+          <div className="metric-top">
+            <span>Quota Còn lại</span>
+            <Zap size={17} />
+          </div>
+          <strong>{remaining !== null ? number(remaining) : "Không xác định"}</strong>
+          <div className="metric-foot">
+            <span>
+              {remainingPercent !== null ? `${remainingPercent.toFixed(1)}% còn lại` : quota?.unit ?? "units"}
+            </span>
+          </div>
+        </article>
+
+        <article className="metric-card">
+          <div className="metric-top">
+            <span>Đã dùng / Tổng quota</span>
+            <BarChart3 size={17} />
+          </div>
+          <strong>
+            {used !== null ? number(used) : "—"} / {total !== null ? number(total) : "—"}
+          </strong>
+          <div className="metric-foot">
+            <span>Đơn vị: {quota?.unit ?? "unknown"}</span>
+          </div>
+        </article>
+
+        <article className="metric-card accent-lime">
+          <div className="metric-top">
+            <span>Đếm ngược đến Reset</span>
+            <Clock3 size={17} />
+          </div>
+          <strong className="countdown-clock">{countdownString}</strong>
+          <div className="metric-foot">
+            <span>Thời điểm reset: {quota?.resetAt ? new Date(quota.resetAt).toLocaleString() : "Không rõ"}</span>
+          </div>
+        </article>
+      </div>
+
+      <div className="panel quota-progress-panel">
+        <div className="panel-head">
+          <div>
+            <span className="eyebrow">TIẾN TRÌNH QUOTA</span>
+            <h2>Phần trăm Quota Khả dụng</h2>
+          </div>
+          <div className="checked-at-tag">
+            <span>Kiểm tra gần nhất: {quota?.checkedAt ? ago(quota.checkedAt) : "Chưa có data"}</span>
+          </div>
+        </div>
+
+        <div className="progress-bar-container">
+          <div className="progress-bar-track">
+            <div
+              className="progress-bar-fill"
+              style={{
+                width: `${Math.min(100, Math.max(0, remainingPercent ?? 0))}%`,
+                backgroundColor: progressBarColor
+              }}
+            />
+          </div>
+          <div className="progress-labels">
+            <span>Đã dùng: {used !== null ? number(used) : "—"}</span>
+            <span className="percent-indicator">{remainingPercent !== null ? `${remainingPercent.toFixed(1)}% còn lại` : "N/A"}</span>
+            <span>Tổng: {total !== null ? number(total) : "—"}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="metric-grid">
+        <article className="metric-card">
+          <div className="metric-top">
+            <span>Tốc độ Tiêu thụ Trung bình</span>
+            <Activity size={17} />
+          </div>
+          <strong>{stats.avgRatePerMinute !== undefined ? `${stats.avgRatePerMinute} / phút` : "—"}</strong>
+          <div className="metric-foot">
+            <span>Tương đương: {stats.avgRatePerHour !== undefined ? `${stats.avgRatePerHour} / giờ` : "—"}</span>
+          </div>
+        </article>
+
+        <article className="metric-card">
+          <div className="metric-top">
+            <span>Ước tính Thời điểm Hết Quota</span>
+            <Gauge size={17} />
+          </div>
+          <strong>
+            {stats.estimatedSecondsUntilDepletion
+              ? `${Math.floor(stats.estimatedSecondsUntilDepletion / 3600)}h ${Math.floor((stats.estimatedSecondsUntilDepletion % 3600) / 60)}m nữa`
+              : "Không cạn kiệt ở tốc độ hiện tại"}
+          </strong>
+          <div className="metric-foot">
+            <span>
+              {stats.estimatedDepletionAt
+                ? `Dự kiến: ${new Date(stats.estimatedDepletionAt).toLocaleString()}`
+                : "Tốc độ sử dụng bằng 0 hoặc chưa có dữ liệu lịch sử"}
+            </span>
+          </div>
+        </article>
+      </div>
+
+      <div className="panel usage-panel">
+        <div className="panel-head">
+          <div>
+            <span className="eyebrow">LỊCH SỬ TIÊU THỤ</span>
+            <h2>Biểu đồ Quota Theo Thời gian</h2>
+          </div>
+        </div>
+        <div className="chart-wrapper" style={{ minHeight: "260px", padding: "1rem" }}>
+          {chartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                <XAxis dataKey="time" stroke="#94a3b8" fontSize={12} />
+                <YAxis stroke="#94a3b8" fontSize={12} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: "#1e293b", borderColor: "#334155", color: "#f8fafc" }}
+                  formatter={(value: any, name: any) => [number(Number(value)), name === "remaining" ? "Còn lại" : name === "used" ? "Đã dùng" : "Tổng"]}
+                />
+                <Area type="monotone" dataKey="remaining" stroke="#bff56b" fill="#bff56b" fillOpacity={0.2} name="remaining" />
+                <Area type="monotone" dataKey="used" stroke="#8b7cf6" fill="#8b7cf6" fillOpacity={0.2} name="used" />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="provider-unavailable">
+              <BarChart3 size={24} />
+              <div>
+                <strong>Chưa có dữ liệu lịch sử quota</strong>
+                <span>Nhấn "Kiểm tra ngay" để ghi nhận snapshot đầu tiên.</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="panel diagnostic-panel" style={{ padding: "1.25rem" }}>
+        <div className="panel-head">
+          <div>
+            <span className="eyebrow">CHẨN ĐOÁN & RESPONSE HEADERS</span>
+            <h2>Thông tin Request & Response Header</h2>
+          </div>
+          <button className="secondary-button" onClick={() => setShowRawHeaders(!showRawHeaders)}>
+            {showRawHeaders ? "Ẩn Chi tiết Header" : "Xem Chi tiết Response Header"}
+          </button>
+        </div>
+        {showRawHeaders && (
+          <div className="raw-headers-view">
+            {quota?.rawHeaders ? (
+              <pre className="code-block">{JSON.stringify(quota.rawHeaders, null, 2)}</pre>
+            ) : (
+              <p>Chưa nhận được raw response headers từ server.</p>
+            )}
+            {quota?.error && <div className="provider-api-error">Lỗi chẩn đoán: {quota.error}</div>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Dashboard() {
   const [page, setPage] = useState("overview");
   const [range, setRange] = useState<RangeKey>("7d");
@@ -535,6 +857,7 @@ function Dashboard() {
           <ProjectTable projects={current} onSelect={(row) => setProjectId(row.id)} limit={5}/>
           <div className="bottom-grid"><SessionTable sessions={(sessions.data ?? []).slice(0, 5)}/><ActivityFeed activity={activity.data ?? []}/></div>
         </>}
+        {page === "nxtcodex" && <NxtCodexQuotaDashboard />}
         {page === "projects" && <><div className="page-heading"><div><span className="eyebrow">WORKSPACE INDEX</span><h1>Projects</h1><p>Every detected workspace, with usage and accuracy at a glance.</p></div></div><ProjectTable projects={current} onSelect={(row) => setProjectId(row.id)}/></>}
         {page === "sessions" && <><div className="page-heading"><div><span className="eyebrow">LOCAL HISTORY</span><h1>Sessions</h1><p>Provider metadata only. Prompts and responses are never stored.</p></div></div><SessionTable sessions={sessions.data ?? []}/></>}
         {page === "providers" && <ThirdPartyProvidersPage/>}

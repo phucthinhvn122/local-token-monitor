@@ -9,6 +9,7 @@ Local Token Monitor is a privacy-first dashboard for understanding token usage f
 ## Features
 
 - Detects installed and running Codex and Claude Code processes without changing them.
+- **NXTCODEX API Quota Monitor Dashboard**: Real-time quota, rate limits, progress bar, threshold notifications (20%, 10%, 5%), reset countdown clock (DD:HH:MM:SS), usage history charts, and consumption speed estimation for `nxtcodex.com`.
 - Discovers recent JSON/JSONL session sources through provider-specific candidate paths.
 - Separates input, output, cache read/write, reasoning, and total tokens.
 - Shows the latest Codex usage-limit percentage and window when Codex reports it.
@@ -74,6 +75,40 @@ npm run dev
 ```
 
 Development uses the Vite UI on port 3456 and the loopback-only API on port 3457.
+
+## NXTCODEX API Quota Monitor
+
+Ứng dụng hỗ trợ theo dõi Quota API Key cho `nxtcodex.com` trên localhost:
+
+### 1. Cấu hình biến môi trường (`.env`)
+
+Tạo hoặc cập nhật file `.env` (xem `.env.example` làm mẫu):
+
+```env
+NXTCODEX_API_KEY=nxt_your_api_key_here
+NXTCODEX_BASE_URL=https://nxtcodex.com/v1
+NXTCODEX_QUOTA_ENDPOINT=
+NXTCODEX_ACCESS_TOKEN=
+NXTCODEX_SESSION_COOKIE=
+```
+
+### 2. Các tính năng nổi bật:
+
+- **Trạng thái & Che Key**: Hiển thị API key đã che (`nxt_****7f2a`) và trạng thái (`active`, `limited`, `exhausted`, `expired`, `invalid`, `unknown`).
+- **Đồng hồ đếm ngược Reset**: Đếm ngược thời gian thực theo định dạng `DDd HHh MMm SSs`.
+- **Thanh tiến trình Phần trăm**: Màu sắc linh hoạt (>20% xanh, 10-20% vàng, <10% đỏ).
+- **Cảnh báo Ngưỡng 20%, 10%, 5%**: Banner thông báo tự động khi quota xuống các mức nguy hiểm.
+- **Lịch sử & Tốc độ tiêu thụ**: Lưu snapshots vào SQLite, tính tốc độ trung bình (số lượng/phút, số lượng/giờ) và dự đoán thời điểm quota sẽ hết.
+- **Nút "Kiểm tra ngay" & Auto-refresh**: Polling cấu hình được (10s, 30s, 60s mặc định, 5m, hoặc off) có backoff.
+- **API Nội bộ**:
+  - `GET /api/quota`
+  - `POST /api/quota/refresh`
+  - `GET /api/quota/history`
+  - `GET /api/health`
+  - `GET /api/settings`
+  - `PUT /api/settings`
+
+---
 
 ## How it works
 

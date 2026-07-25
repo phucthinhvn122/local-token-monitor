@@ -13,14 +13,22 @@ import type {
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
+export {
+  fetchNxtCodexQuotaStatus,
+  maskApiKey,
+  parseHeaderValue,
+  parseResetTimestamp,
+  type NxtCodexQuotaOptions
+} from "./nxtcodex.js";
+
 export interface ProviderResearchRecord {
   providerId: ThirdPartyProviderId;
   domain: string;
   domainStatus: "verified" | "unverified";
   publicBaseUrl?: string;
+  quotaEndpoint?: string;
   protocols: Array<"openai" | "anthropic">;
   inferenceEndpoints: string[];
-  quotaEndpoint?: string;
   quotaEndpointVerified: boolean;
   dashboardAvailable: boolean;
   automationAllowed: "not-documented" | "restricted" | "unknown";
@@ -31,6 +39,31 @@ export interface ProviderResearchRecord {
 const observedAt = "2026-07-25T05:22:03.000Z";
 
 export const providerResearch: Record<ThirdPartyProviderId, ProviderResearchRecord> = {
+  nxtcodex: {
+    providerId: "nxtcodex",
+    domain: "nxtcodex.com",
+    domainStatus: "verified",
+    publicBaseUrl: "https://nxtcodex.com/v1",
+    protocols: ["openai"],
+    inferenceEndpoints: ["/v1/chat/completions", "/v1/models"],
+    quotaEndpointVerified: false,
+    dashboardAvailable: true,
+    automationAllowed: "not-documented",
+    notes: [
+      "Official site documents API key usage, credit packages, and usage status.",
+      "Adapter supports NXTCODEX_API_KEY, NXTCODEX_ACCESS_TOKEN, NXTCODEX_SESSION_COOKIE.",
+      "Reads response headers (x-ratelimit-*) and JSON body structures."
+    ],
+    evidence: [
+      {
+        kind: "official-doc",
+        label: "NXTCODEX Official Site",
+        url: "https://nxtcodex.com/",
+        isOfficial: true,
+        observedAt
+      }
+    ]
+  },
   freemodel: {
     providerId: "freemodel",
     domain: "freemodel.dev",
@@ -144,6 +177,17 @@ export const providerResearch: Record<ThirdPartyProviderId, ProviderResearchReco
 
 export const bundledProviderConfigs: ThirdPartyProviderConfig[] = [
   {
+    id: "nxtcodex",
+    adapterId: "nxtcodex",
+    displayName: "NXTCODEX",
+    baseUrl: "https://nxtcodex.com/v1",
+    apiKeyEnv: "NXTCODEX_API_KEY",
+    protocol: "openai",
+    enabled: true,
+    refreshIntervalMinutes: 1,
+    endpointVerified: false
+  },
+  {
     id: "freemodel",
     adapterId: "freemodel",
     displayName: "FreeModel",
@@ -184,6 +228,7 @@ export const bundledProviderConfigs: ThirdPartyProviderConfig[] = [
 ];
 
 const displayNames: Record<ThirdPartyProviderId, string> = {
+  nxtcodex: "NXTCODEX",
   freemodel: "FreeModel",
   nttcodex: "NTTCodex",
   "openai-compatible": "OpenAI-compatible",

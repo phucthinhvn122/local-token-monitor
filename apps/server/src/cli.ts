@@ -118,7 +118,7 @@ async function main(): Promise<void> {
       }
       const target = positionalArgs[2];
       if (!target) {
-        console.error(`Provider ${action} requires one of: freemodel, nttcodex, openai-compatible, anthropic-compatible`);
+        console.error(`Provider ${action} requires one of: nxtcodex, freemodel, nttcodex, openai-compatible, anthropic-compatible`);
         process.exitCode = 2;
         return;
       }
