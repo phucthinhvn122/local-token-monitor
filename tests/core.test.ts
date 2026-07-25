@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { matchProviderProcess, normalizeUsage, redactSecrets, resolveProject } from "@ltm/core";
@@ -65,7 +65,7 @@ describe("project resolution", () => {
       { processCwd: path.join(root, "packages", "app") },
       async (_file, args) => ({ stdout: args.includes("remote.origin.url") ? "https://example.test/owner/repo.git\n" : "main\n", stderr: "" })
     );
-    expect(project.path).toBe(root);
+    expect(project.path).toBe(await realpath(root));
     expect(project.name).toBe("repo");
     expect(project.gitBranch).toBe("main");
   });
