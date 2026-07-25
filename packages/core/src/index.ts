@@ -135,7 +135,7 @@ export async function resolveProject(
   },
   gitRunner: (file: string, args: string[]) => Promise<{ stdout: string; stderr?: string }> =
     async (file, args) => {
-      const result = await execFileAsync(file, args);
+      const result = await execFileAsync(file, args, { windowsHide: true });
       return { stdout: result.stdout, stderr: result.stderr };
     }
 ): Promise<ProjectInfo> {
@@ -176,7 +176,10 @@ export function matchProviderProcess(process: { name: string; command?: string; 
   return matchProvider(process.name, process.command, process.path);
 }
 
-export async function scanProcesses(): Promise<ProcessInfo[]> {
+let processScanCache: Promise<ProcessInfo[]> | undefined;
+let processScanCacheAt = 0;
+
+async function scanProcessesUncached(): Promise<ProcessInfo[]> {
   const data = await si.processes();
   const matches: ProcessInfo[] = [];
   for (const process of data.list) {
@@ -194,6 +197,17 @@ export async function scanProcesses(): Promise<ProcessInfo[]> {
     });
   }
   return matches;
+}
+
+export async function scanProcesses(): Promise<ProcessInfo[]> {
+  const now = Date.now();
+  if (processScanCache && now - processScanCacheAt < 5_000) return processScanCache;
+  processScanCacheAt = now;
+  processScanCache = scanProcessesUncached().catch((error) => {
+    processScanCache = undefined;
+    throw error;
+  });
+  return processScanCache;
 }
 
 export function privacyProject(project: ProjectInfo, enabled: boolean): ProjectInfo {

@@ -18,14 +18,22 @@ const execFileAsync = promisify(execFile);
 const exists = (candidate: string) => access(candidate).then(() => true).catch(() => false);
 
 async function locate(command: string): Promise<string | undefined> {
-  const locator = process.platform === "win32" ? "where.exe" : "which";
+  if (process.platform === "win32") {
+    const extensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+    const names = [command, ...extensions.map((extension) => `${command}${extension.toLowerCase()}`)];
+    for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
+      const cleanDirectory = directory.replace(/^"|"$/g, "");
+      for (const name of names) {
+        const candidate = path.join(cleanDirectory, name);
+        if (await exists(candidate)) return candidate;
+      }
+    }
+    return undefined;
+  }
   let result: { stdout: string };
-  try { result = await execFileAsync(locator, [command]); } catch { result = { stdout: "" }; }
+  try { result = await execFileAsync("which", [command], { windowsHide: true }); } catch { result = { stdout: "" }; }
   const paths = result.stdout.split(/\r?\n/).filter(Boolean);
-  return paths.find((item) => /\.exe$/i.test(item) && !/\\WindowsApps\\/i.test(item))
-    ?? paths.find((item) => /\.cmd$/i.test(item))
-    ?? paths.find((item) => /\.exe$/i.test(item))
-    ?? paths[0];
+  return paths[0];
 }
 
 async function readVersion(executablePath: string, commandName: string): Promise<string> {
@@ -47,6 +55,7 @@ export class ClaudeAdapter implements ProviderAdapter {
   private collectedEvents = 0;
   private duplicateEvents = 0;
   private parseStates = new Map<string, JsonLinesParseState>();
+  private installationCache?: { expiresAt: number; value: InstallationInfo };
 
   constructor(private readonly customPaths: string[] = []) {}
 
@@ -64,15 +73,24 @@ export class ClaudeAdapter implements ProviderAdapter {
   }
 
   async detectInstallation(): Promise<InstallationInfo> {
+    if (this.installationCache && this.installationCache.expiresAt > Date.now()) {
+      return this.installationCache.value;
+    }
     const executablePath = await locate("claude");
-    if (!executablePath) return { installed: false };
+    if (!executablePath) {
+      const value = { installed: false };
+      this.installationCache = { expiresAt: Date.now() + 60_000, value };
+      return value;
+    }
     const version = await readVersion(executablePath, "claude");
-    return {
+    const value = {
       installed: true,
       executablePath,
       version: version.split(/\s+/)[0] || undefined,
       warning: "Cache usage is reported only when present in Claude session metadata."
     };
+    this.installationCache = { expiresAt: Date.now() + 300_000, value };
+    return value;
   }
 
   async discoverSources(): Promise<CollectorSource[]> {
