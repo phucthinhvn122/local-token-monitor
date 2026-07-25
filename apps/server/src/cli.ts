@@ -71,7 +71,7 @@ async function reportRunning(url: string): Promise<void> {
   console.log(`  Dashboard: ${url}`);
   await printProviderStatus(url);
   if (forceOpen) await openDashboard(url);
-  else console.log("  Run `local-token-monitor open` to open another browser tab.");
+  else console.log("  Add `open` to the same command only when you want another browser tab.");
 }
 
 async function main(): Promise<void> {
