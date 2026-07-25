@@ -27,12 +27,16 @@ function running(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-async function waitForServer(url: string, timeoutMs = 12_000): Promise<boolean> {
+async function waitForServer(url: string, timeoutMs = 12_000, expectedPid?: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(1_000) });
-      if (response.ok) return true;
+      if (response.ok) {
+        if (expectedPid === undefined) return true;
+        const health = await response.json() as { pid?: number };
+        if (health.pid === expectedPid) return true;
+      }
     } catch {
       // The detached server may still be opening SQLite and binding its port.
     }
@@ -191,8 +195,9 @@ async function main(): Promise<void> {
           stdio: "ignore",
           windowsHide: true
         });
+        if (!child.pid) throw new Error("Unable to determine the background server PID.");
         child.unref();
-        if (!await waitForServer(url)) {
+        if (!await waitForServer(url, 12_000, child.pid)) {
           console.error("Local Token Monitor did not become ready. Run `npx local-token-monitor doctor` for diagnostics.");
           process.exitCode = 1;
           return;

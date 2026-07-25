@@ -130,6 +130,7 @@ export async function startServer(options: { port?: number; host?: string; openB
 
   app.get("/api/health", async () => ({
     status: "ok",
+    pid: process.pid,
     timestamp: new Date().toISOString(),
     localOnly: host === "127.0.0.1"
   }));
