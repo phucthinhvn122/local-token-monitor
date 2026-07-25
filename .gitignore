@@ -1,0 +1,11 @@
+node_modules/
+dist/
+apps/web/dist/
+.local-token-monitor/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+coverage/
+.env
+*.log
+.DS_Store

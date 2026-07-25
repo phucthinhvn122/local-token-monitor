@@ -1,0 +1,31 @@
+[
+  {
+    "provider": "openai",
+    "modelPattern": "gpt-5|codex",
+    "inputPerMillion": 1.25,
+    "outputPerMillion": 10,
+    "cacheReadPerMillion": 0.125,
+    "effectiveFrom": "2025-08-07",
+    "sourceUrl": "https://openai.com/api/pricing/"
+  },
+  {
+    "provider": "anthropic",
+    "modelPattern": "claude-sonnet",
+    "inputPerMillion": 3,
+    "outputPerMillion": 15,
+    "cacheReadPerMillion": 0.3,
+    "cacheWritePerMillion": 3.75,
+    "effectiveFrom": "2025-01-01",
+    "sourceUrl": "https://www.anthropic.com/pricing"
+  },
+  {
+    "provider": "anthropic",
+    "modelPattern": "claude-opus",
+    "inputPerMillion": 15,
+    "outputPerMillion": 75,
+    "cacheReadPerMillion": 1.5,
+    "cacheWritePerMillion": 18.75,
+    "effectiveFrom": "2025-01-01",
+    "sourceUrl": "https://www.anthropic.com/pricing"
+  }
+]

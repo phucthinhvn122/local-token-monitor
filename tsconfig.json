@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@ltm/shared-types": ["packages/shared-types/src/index.ts"],
+      "@ltm/core": ["packages/core/src/index.ts"],
+      "@ltm/database": ["packages/database/src/index.ts"],
+      "@ltm/collectors": ["packages/collectors/src/index.ts"],
+      "@ltm/provider-codex": ["packages/provider-codex/src/index.ts"],
+      "@ltm/provider-claude": ["packages/provider-claude/src/index.ts"],
+      "@ltm/token-estimator": ["packages/token-estimator/src/index.ts"]
+    }
+  },
+  "include": ["apps", "packages", "tests"]
+}

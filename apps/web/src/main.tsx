@@ -1,0 +1,429 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Activity, BarChart3, Bell, Bot, CircleDollarSign, Clock3, Database,
+  Download, EyeOff, FolderGit2, Gauge, HardDrive, Info, LayoutDashboard, Menu,
+  MoreHorizontal, RefreshCw, Search, Server, Settings, ShieldCheck, Sparkles,
+  TerminalSquare, Trash2, X, Zap
+} from "lucide-react";
+import {
+  Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis
+} from "recharts";
+import "./styles.css";
+
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { staleTime: 5_000, refetchOnWindowFocus: false, retry: 1 } }
+});
+const dashboardAnchorTime = Date.now();
+
+type Row = Record<string, any>;
+type RangeKey = "5m" | "15m" | "1h" | "24h" | "7d" | "30d";
+
+async function api<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    ...init,
+    headers: { "content-type": "application/json", ...init?.headers }
+  });
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error ?? `Request failed (${response.status})`);
+  return response.json() as Promise<T>;
+}
+
+const number = (value: number) =>
+  new Intl.NumberFormat("en-US", { notation: value >= 10_000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value || 0);
+const money = (value: number) => `$${Number(value || 0).toFixed(value > 10 ? 2 : 3)}`;
+const ago = (value?: string) => {
+  if (!value) return "No activity";
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60_000));
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
+  return `${Math.floor(minutes / 1440)}d ago`;
+};
+const shortId = (value: string) => `${value.slice(0, 8)}…`;
+const rangeMilliseconds = (range: RangeKey) =>
+  ({ "5m": 300_000, "15m": 900_000, "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 })[range];
+const intervalFor = (range: RangeKey) => range === "5m" ? "5m" : range === "15m" ? "5m" : range === "1h" ? "15m" : range === "24h" ? "hour" : "day";
+const percentageChange = (current: number, previous: number) =>
+  previous > 0 ? ((current - previous) / previous) * 100 : current > 0 ? 100 : 0;
+const windowLabel = (minutes?: number) => {
+  if (!minutes) return "current window";
+  if (minutes % 10_080 === 0) return `${minutes / 10_080}w window`;
+  if (minutes % 1_440 === 0) return `${minutes / 1_440}d window`;
+  if (minutes % 60 === 0) return `${minutes / 60}h window`;
+  return `${minutes}m window`;
+};
+
+function AccuracyBadge({ value }: { value: string }) {
+  const normalized = value || "unavailable";
+  return <span className={`accuracy accuracy-${normalized}`} title={
+    normalized === "exact" ? "Reported directly by the provider" :
+    normalized === "derived" ? "Calculated from exact component fields" :
+    normalized === "estimated" ? "Estimated locally; not provider-reported" :
+    "The provider did not expose enough information"
+  }><i />{normalized[0].toUpperCase() + normalized.slice(1)}</span>;
+}
+
+function ProviderMark({ provider }: { provider: string }) {
+  return <span className={`provider-mark ${provider}`}><span>{provider === "codex" ? "O" : "A"}</span>{provider === "codex" ? "Codex" : "Claude"}</span>;
+}
+
+function Delta({ value }: { value: number }) {
+  const positive = value >= 0;
+  return <span className={positive ? "delta positive" : "delta negative"}>{positive ? "↗" : "↘"} {Math.abs(value).toFixed(1)}%</span>;
+}
+
+function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`skeleton ${className}`} />;
+}
+
+function Sidebar({ page, setPage, mobileOpen, close }: { page: string; setPage: (page: string) => void; mobileOpen: boolean; close: () => void }) {
+  const items = [
+    ["overview", LayoutDashboard, "Overview"],
+    ["projects", FolderGit2, "Projects"],
+    ["sessions", TerminalSquare, "Sessions"],
+    ["diagnostics", Gauge, "Diagnostics"]
+  ] as const;
+  return <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>
+    <button className="mobile-close" onClick={close} aria-label="Close navigation"><X size={20} /></button>
+    <div className="brand"><div className="brand-mark"><Zap size={19} fill="currentColor" /></div><div><strong>Local Token</strong><span>MONITOR</span></div></div>
+    <nav>
+      <div className="nav-label">Workspace</div>
+      {items.map(([id, Icon, label]) => <button key={id} className={page === id ? "active" : ""} onClick={() => { setPage(id); close(); }}>
+        <Icon size={18} />{label}{id === "sessions" && <span className="nav-count">9</span>}
+      </button>)}
+    </nav>
+    <div className="sidebar-bottom">
+      <div className="privacy-card"><ShieldCheck size={18} /><div><strong>Local by design</strong><span>No telemetry. Ever.</span></div><span className="live-dot" /></div>
+      <div className="version-row"><span>v0.1.0</span><span>MIT Licensed</span></div>
+    </div>
+  </aside>;
+}
+
+function Header({ status, settings, openSettings, openMenu }: { status?: Row; settings?: Row; openSettings: () => void; openMenu: () => void }) {
+  const providers = status?.providers ?? [];
+  const codex = providers.find((item: Row) => item.provider === "codex");
+  const claude = providers.find((item: Row) => item.provider === "claude");
+  return <header className="topbar">
+    <button className="menu-button" onClick={openMenu} aria-label="Open navigation"><Menu size={20} /></button>
+    <div className="server-state"><span className="pulse" /><div><strong>All systems local</strong><span>Updated {ago(status?.lastUpdatedAt)}</span></div></div>
+    <div className="header-statuses">
+      <span className="status-chip"><span className={`dot ${codex?.installation?.installed ? "green" : ""}`} />Codex <b>{codex?.running ? "Live" : codex?.installation?.installed ? "Ready" : "Off"}</b></span>
+      <span className="status-chip"><span className={`dot ${claude?.installation?.installed ? "violet" : ""}`} />Claude <b>{claude?.running ? "Live" : claude?.installation?.installed ? "Ready" : "Off"}</b></span>
+      <span className="status-chip collectors"><Activity size={14} />{status?.activeCollectors ?? 0} collectors</span>
+    </div>
+    <div className="header-actions">
+      <span className="demo-pill"><Sparkles size={13} />{settings?.demoMode ? "Demo data" : "Live data"}</span>
+      <button className="icon-button" aria-label="Notifications"><Bell size={17} /><i /></button>
+      <button className="settings-button" onClick={openSettings}><Settings size={16} />Settings</button>
+    </div>
+  </header>;
+}
+
+function OverviewCard({ label, value, icon: Icon, delta, hint, accent }: any) {
+  return <article className={`metric-card ${accent ?? ""}`}>
+    <div className="metric-top"><span>{label}</span><span className="metric-icon"><Icon size={17} /></span></div>
+    <strong>{value}</strong>
+    <div className="metric-foot">{delta !== undefined && <Delta value={delta} />}<span>{hint}</span></div>
+  </article>;
+}
+
+function UsageChart({ data, range, setRange, provider, setProvider, loading }: any) {
+  const [visible, setVisible] = useState({ input: true, output: true, cache: true, reasoning: false });
+  const chartData = data.map((item: Row) => ({
+    ...item,
+    label: new Date(item.timestamp).toLocaleDateString(undefined, range === "24h" ? { hour: "2-digit" } : { month: "short", day: "numeric" })
+  }));
+  const colors: Record<string, string> = { input: "#bff56b", output: "#8b7cf6", cache: "#56c9df", reasoning: "#f5ab5f" };
+  return <section className="panel usage-panel">
+    <div className="panel-head">
+      <div><span className="eyebrow">REAL-TIME USAGE</span><h2>Token flow</h2></div>
+      <div className="chart-controls">
+        <select value={provider} onChange={(event) => setProvider(event.target.value)} aria-label="Provider filter">
+          <option value="">All providers</option><option value="codex">Codex</option><option value="claude">Claude Code</option>
+        </select>
+        <div className="range-tabs">{(["5m","15m","1h","24h","7d","30d"] as RangeKey[]).map((item) =>
+          <button className={range === item ? "active" : ""} key={item} onClick={() => setRange(item)}>{item.toUpperCase()}</button>)}
+        </div>
+      </div>
+    </div>
+    <div className="legend">
+      {Object.entries(visible).map(([key, on]) => <button key={key} className={!on ? "off" : ""} onClick={() => setVisible({ ...visible, [key]: !on })}>
+        <i style={{ background: colors[key] }} />{key[0].toUpperCase() + key.slice(1)}</button>)}
+    </div>
+    <div className="chart-wrap">
+      {loading ? <Skeleton className="chart-skeleton" /> : chartData.length === 0 ? <div className="empty-chart"><BarChart3 size={28} /><strong>No token events in this range</strong><span>Try 7D or 30D, or switch to Demo Mode.</span></div> :
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={chartData} margin={{ left: -20, right: 12, top: 12 }}>
+          <defs>{Object.entries(colors).map(([key, color]) => <linearGradient id={`fill-${key}`} key={key} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity={.26}/><stop offset="100%" stopColor={color} stopOpacity={0}/></linearGradient>)}</defs>
+          <CartesianGrid stroke="#242a32" vertical={false} strokeDasharray="3 6" />
+          <XAxis dataKey="label" stroke="#69717d" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} minTickGap={32} />
+          <YAxis stroke="#69717d" tickLine={false} axisLine={false} tickFormatter={number} tick={{ fontSize: 11 }} />
+          <Tooltip contentStyle={{ background: "#11161d", border: "1px solid #303841", borderRadius: 10, fontSize: 12 }} formatter={(value: any) => [number(Number(value)), "tokens"]} />
+          {Object.entries(visible).map(([key, on]) => on && <Area key={key} type="monotone" dataKey={key} stroke={colors[key]} strokeWidth={2} fill={`url(#fill-${key})`} />)}
+        </AreaChart>
+      </ResponsiveContainer>}
+    </div>
+  </section>;
+}
+
+function ProviderBreakdown({ rows }: { rows: Row[] }) {
+  const total = rows.reduce((sum, row) => sum + row.total_tokens, 0) || 1;
+  return <section className="panel provider-panel">
+    <div className="panel-head"><div><span className="eyebrow">PROVIDERS</span><h2>Usage split</h2></div><button className="ghost-icon"><MoreHorizontal size={18}/></button></div>
+    <div className="provider-list">
+      {["codex","claude"].map((provider) => {
+        const row = rows.find((item) => item.provider === provider) ?? { total_tokens: 0, sessions: 0, projects: 0, exact_rate: 0, estimated_cost: 0 };
+        const percent = Math.round(row.total_tokens / total * 100);
+        return <div className="provider-row" key={provider}>
+          <div className={`provider-logo ${provider}`}>{provider === "codex" ? <Bot size={19}/> : <Sparkles size={19}/>}</div>
+          <div className="provider-data">
+            <div><strong>{provider === "codex" ? "OpenAI Codex" : "Claude Code"}</strong><span>{number(row.total_tokens)} tokens</span></div>
+            <div className="meter"><i style={{ width: `${percent}%` }} /></div>
+            <div className="provider-meta"><span>{percent}% share</span><span>{row.sessions} sessions</span><span>{row.projects} projects</span></div>
+          </div>
+          <div className="provider-cost"><strong>{money(row.estimated_cost)}</strong><span>{row.exact_rate ?? 0}% exact</span></div>
+        </div>;
+      })}
+    </div>
+    <div className="privacy-note"><ShieldCheck size={16}/><div><strong>Private collection</strong><span>Usage metadata never leaves this device.</span></div></div>
+  </section>;
+}
+
+function ProjectTable({ projects, onSelect, limit }: { projects: Row[]; onSelect: (row: Row) => void; limit?: number }) {
+  const [search, setSearch] = useState("");
+  const [provider, setProvider] = useState("");
+  const [sort, setSort] = useState("total_tokens");
+  const visible = useMemo(() => projects
+    .filter((row) => !search || row.name.toLowerCase().includes(search.toLowerCase()))
+    .filter((row) => !provider || String(row.providers).includes(provider))
+    .sort((a, b) => sort === "name" ? a.name.localeCompare(b.name) : Number(b[sort] ?? 0) - Number(a[sort] ?? 0))
+    .slice(0, limit), [projects, search, provider, sort, limit]);
+  return <section className="panel table-panel">
+    <div className="panel-head table-title"><div><span className="eyebrow">PROJECTS</span><h2>Usage by workspace</h2></div>
+      <div className="table-tools"><label className="search"><Search size={15}/><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search projects" /></label>
+        <select value={provider} onChange={(e) => setProvider(e.target.value)}><option value="">All providers</option><option value="codex">Codex</option><option value="claude">Claude</option></select>
+        <select value={sort} onChange={(e) => setSort(e.target.value)}><option value="total_tokens">Most tokens</option><option value="last_activity">Recent</option><option value="name">Name</option></select>
+      </div>
+    </div>
+    <div className="table-scroll"><table><thead><tr><th>Project</th><th>Provider</th><th>Model</th><th>Input</th><th>Output</th><th>Cache</th><th>Total</th><th>Est. cost</th><th>Accuracy</th><th>Last activity</th></tr></thead>
+      <tbody>{visible.map((row) => <tr key={row.id} onClick={() => onSelect(row)}>
+        <td><div className="project-cell"><span><FolderGit2 size={17}/></span><div><strong>{row.name}</strong><small>{row.git_branch || "local workspace"}</small></div></div></td>
+        <td><div className="provider-stack">{String(row.providers ?? "").split(",").filter(Boolean).map((item) => <i key={item} className={item}>{item === "codex" ? "O" : "A"}</i>)}</div></td>
+        <td className="muted">{String(row.models ?? "—").split(",")[0]}</td><td>{number(row.input_tokens)}</td><td>{number(row.output_tokens)}</td><td>{number(row.cache_tokens)}</td>
+        <td><strong>{number(row.total_tokens)}</strong></td><td>{money(row.estimated_cost)}</td><td><AccuracyBadge value={Number(row.exact_rate) >= 90 ? "exact" : Number(row.exact_rate) >= 70 ? "derived" : "estimated"} /></td><td className="muted">{ago(row.last_activity)}</td>
+      </tr>)}</tbody></table></div>
+    {visible.length === 0 && <div className="empty-row">No projects match these filters.</div>}
+  </section>;
+}
+
+function SessionTable({ sessions }: { sessions: Row[] }) {
+  return <section className="panel table-panel full-page-panel">
+    <div className="panel-head table-title"><div><span className="eyebrow">SESSION LOG</span><h2>Codex & Claude sessions</h2></div><span className="result-count">{sessions.length} sessions</span></div>
+    <div className="table-scroll"><table><thead><tr><th>Session</th><th>Provider</th><th>Project</th><th>Model</th><th>Started</th><th>Duration</th><th>Input</th><th>Output</th><th>Total</th><th>Accuracy</th><th>Status</th></tr></thead>
+      <tbody>{sessions.map((row) => {
+        const duration = Math.max(1, Math.round((new Date(row.last_activity_at).getTime() - new Date(row.started_at).getTime()) / 60_000));
+        return <tr key={row.id}><td><code title={row.id}>{shortId(row.id)}</code></td><td><ProviderMark provider={row.provider}/></td><td>{row.project_name}</td><td className="muted">{row.model || "Unknown"}</td><td className="muted">{new Date(row.started_at).toLocaleDateString()}</td><td>{duration}m</td><td>{number(row.input_tokens)}</td><td>{number(row.output_tokens)}</td><td><strong>{number(row.total_tokens)}</strong></td><td><AccuracyBadge value={row.usage_accuracy}/></td><td><span className={`session-status ${row.status}`}><i/>{row.status}</span></td></tr>;
+      })}</tbody></table></div>
+  </section>;
+}
+
+function ActivityFeed({ activity }: { activity: Row[] }) {
+  return <section className="panel activity-panel"><div className="panel-head"><div><span className="eyebrow">LIVE ACTIVITY</span><h2>Collector events</h2></div><span className="live-label"><i/>LIVE</span></div>
+    <div className="feed">{activity.slice(0, 7).map((item, index) => <div className="feed-item" key={`${item.timestamp}-${index}`}>
+      <span className={`feed-icon ${item.provider ?? "system"}`}>{item.type === "settings" ? <Settings size={14}/> : item.provider === "claude" ? <Sparkles size={14}/> : <TerminalSquare size={14}/>}</span>
+      <div><strong>{item.message ?? `${number(item.total_tokens)} tokens recorded`}</strong><span>{item.project_name ? `${item.project_name} · ` : ""}{item.provider ? (item.provider === "codex" ? "Codex" : "Claude") : "System"}</span></div><time>{new Date(item.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
+    </div>)}</div>
+  </section>;
+}
+
+function ProjectDetail({ projectId, close }: { projectId: string; close: () => void }) {
+  const client = useQueryClient();
+  const { data, isLoading } = useQuery({ queryKey: ["project", projectId], queryFn: () => api<Row>(`/api/projects/${projectId}`) });
+  const updateProject = useMutation({
+    mutationFn: (patch: Row) => api(`/api/projects/${projectId}`, { method: "PATCH", body: JSON.stringify(patch) }),
+    onSuccess: () => { client.invalidateQueries({ queryKey: ["projects"] }); client.invalidateQueries({ queryKey: ["project", projectId] }); }
+  });
+  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && close()}>
+    <section className="detail-modal">{isLoading ? <Skeleton className="detail-skeleton"/> : data && <>
+      <button className="modal-close" onClick={close} aria-label="Close project details"><X size={19}/></button>
+      <div className="detail-kicker"><FolderGit2 size={16}/>PROJECT DETAILS</div><h2>{data.name}</h2><p>{data.git_remote || data.path}</p>
+      <div className="detail-stats"><div><span>Total tokens</span><strong>{number(data.total_tokens)}</strong></div><div><span>Estimated cost</span><strong>{money(data.estimated_cost)}</strong></div><div><span>Exact coverage</span><strong>{data.exact_rate || 0}%</strong></div></div>
+      <div className="detail-grid"><div><span>Current branch</span><strong>{data.git_branch || "Not detected"}</strong></div><div><span>Providers</span><strong>{data.providers || "—"}</strong></div><div><span>Models</span><strong>{data.models || "—"}</strong></div><div><span>Last activity</span><strong>{ago(data.last_activity)}</strong></div></div>
+      <h3>Daily input / output</h3><div className="mini-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data.timeline}><Area dataKey="input" stroke="#bff56b" fill="#bff56b22"/><Area dataKey="output" stroke="#8b7cf6" fill="#8b7cf622"/><XAxis dataKey="timestamp" hide/><YAxis hide/><Tooltip contentStyle={{background:"#11161d",border:"1px solid #303841"}}/></AreaChart></ResponsiveContainer></div>
+      <form className="project-actions" onSubmit={(event) => { event.preventDefault(); const input = event.currentTarget.elements.namedItem("displayName") as HTMLInputElement; updateProject.mutate({ displayName: input.value }); }}><label>Display name<input name="displayName" defaultValue={data.name} /></label><button className="secondary-button" type="submit">Rename</button><button className="danger-link" type="button" onClick={() => { updateProject.mutate({ hidden: true }); close(); }}><EyeOff size={14}/>Hide project</button></form>
+      <div className="detail-footer"><ShieldCheck size={15}/> This view contains usage metadata only—never prompts or source code.</div>
+    </>}</section>
+  </div>;
+}
+
+function DiagnosticsPage() {
+  const { data, isLoading, refetch } = useQuery({ queryKey: ["diagnostics"], queryFn: () => api<Row>("/api/diagnostics") });
+  if (isLoading) return <Skeleton className="page-skeleton"/>;
+  return <div className="diagnostics-page">
+    <div className="page-heading"><div><span className="eyebrow">SYSTEM CHECK</span><h1>Diagnostics</h1><p>Redacted health information for your local collectors.</p></div><div className="heading-actions"><button className="secondary-button" onClick={() => refetch()}><RefreshCw size={15}/>Run checks</button><a className="primary-button" href="/api/diagnostics/report"><Download size={15}/>Download report</a></div></div>
+    <div className="diagnostic-overview"><div><Server/><span>Server</span><strong>Healthy</strong><small>Loopback only</small></div><div><HardDrive/><span>Platform</span><strong>{data?.platform} · {data?.arch}</strong><small>{data?.release}</small></div><div><TerminalSquare/><span>Runtime</span><strong>{data?.nodeVersion}</strong><small>Node.js</small></div><div><Database/><span>Storage</span><strong>SQLite WAL</strong><small>Local device</small></div></div>
+    <div className="collector-diagnostics">{data?.collectors?.map((collector: Row) => <section className="panel diagnostic-card" key={collector.provider}>
+      <div className="diagnostic-title"><div className={`provider-logo ${collector.provider}`}>{collector.provider === "codex" ? <Bot/> : <Sparkles/>}</div><div><h2>{collector.provider === "codex" ? "OpenAI Codex" : "Claude Code"}</h2><span>{collector.installation.installed ? `Detected · ${collector.installation.version ?? "version unknown"}` : "Not detected"}</span></div><span className={`health-tag ${collector.installation.installed ? "good" : ""}`}>{collector.running ? "Running" : collector.installation.installed ? "Ready" : "Unavailable"}</span></div>
+      <div className="diag-numbers"><div><span>Files watched</span><strong>{collector.watchedFiles}</strong></div><div><span>Events collected</span><strong>{collector.collectedEvents}</strong></div><div><span>Duplicates skipped</span><strong>{collector.duplicateEvents}</strong></div></div>
+      <h3>Candidate paths</h3><div className="path-list">{collector.candidatePaths.map((item: Row) => <div key={item.path}><i className={item.exists ? "exists" : ""}/><code>{item.path}</code><span>{item.exists ? "Found" : "Not found"}</span></div>)}</div>
+      {collector.warning && <div className="warning"><Info size={15}/>{collector.warning}</div>}
+    </section>)}</div>
+  </div>;
+}
+
+function SettingsDrawer({ settings, close }: { settings: Row; close: () => void }) {
+  const client = useQueryClient();
+  const [draft, setDraft] = useState(settings);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const save = useMutation({
+    mutationFn: () => Promise.all([
+      api("/api/settings", { method: "PATCH", body: JSON.stringify({
+        port: Number(draft.port), retentionDays: Number(draft.retentionDays), pollingIntervalMs: Number(draft.pollingIntervalMs),
+        codexCollectorEnabled: Boolean(draft.codexCollectorEnabled), claudeCollectorEnabled: Boolean(draft.claudeCollectorEnabled),
+        tokenEstimationEnabled: Boolean(draft.tokenEstimationEnabled), costEstimationEnabled: Boolean(draft.costEstimationEnabled),
+        privacyMode: Boolean(draft.privacyMode), demoMode: Boolean(draft.demoMode), allowNetwork: Boolean(draft.allowNetwork),
+        customProviderPaths: draft.customProviderPaths ?? [], customLogPaths: draft.customLogPaths ?? []
+      }) }),
+      api("/api/settings/pricing", { method: "PUT", body: JSON.stringify(draft.pricing ?? []) })
+    ]),
+    onSuccess: () => { client.invalidateQueries(); close(); }
+  });
+  const toggle = (key: string) => <button className={`switch ${draft[key] ? "on" : ""}`} onClick={() => setDraft({ ...draft, [key]: !draft[key] })} aria-label={`Toggle ${key}`}><i/></button>;
+  return <div className="drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && close()}><aside className="settings-drawer">
+    <div className="drawer-head"><div><span className="eyebrow">LOCAL CONFIGURATION</span><h2>Settings</h2></div><button className="modal-close" onClick={close} aria-label="Close settings"><X size={19}/></button></div>
+    <div className="drawer-body">
+      <div className="setting-section"><h3>Data source</h3><div className="setting-row"><div><strong>Demo Mode</strong><span>Use isolated sample data across 30 days.</span></div>{toggle("demoMode")}</div>
+        <div className="setting-row"><div><strong>Codex collector</strong><span>Read supported local usage metadata.</span></div>{toggle("codexCollectorEnabled")}</div>
+        <div className="setting-row"><div><strong>Claude collector</strong><span>Read supported local usage metadata.</span></div>{toggle("claudeCollectorEnabled")}</div>
+      </div>
+      <div className="setting-section"><h3>Privacy & estimates</h3><div className="setting-row"><div><strong>Privacy Mode</strong><span>Hide paths, remotes, usernames and full IDs.</span></div>{toggle("privacyMode")}</div>
+        <div className="setting-row"><div><strong>Token estimation</strong><span>Fallback only; always labeled Estimated.</span></div>{toggle("tokenEstimationEnabled")}</div>
+        <div className="setting-row"><div><strong>Cost estimation</strong><span>Use the editable local pricing table.</span></div>{toggle("costEstimationEnabled")}</div>
+      </div>
+      <div className="setting-section"><h3>Server & storage</h3><div className="field-grid"><label>Dashboard port<input type="number" value={draft.port} onChange={(e) => setDraft({...draft,port:e.target.value})}/></label><label>Retention (days)<input type="number" value={draft.retentionDays} onChange={(e) => setDraft({...draft,retentionDays:e.target.value})}/></label><label>Polling (ms)<input type="number" value={draft.pollingIntervalMs} onChange={(e) => setDraft({...draft,pollingIntervalMs:e.target.value})}/></label></div>
+        <div className="locked-path"><Database size={15}/><span>{draft.databasePath}</span></div>
+      </div>
+      <div className="setting-section"><h3>Custom discovery paths</h3>
+        <label className="stacked-field">Provider roots<textarea value={(draft.customProviderPaths ?? []).join("\n")} onChange={(event) => setDraft({...draft,customProviderPaths:event.target.value.split(/\r?\n/).filter(Boolean)})} placeholder="One absolute path per line" /></label>
+        <label className="stacked-field">Log roots<textarea value={(draft.customLogPaths ?? []).join("\n")} onChange={(event) => setDraft({...draft,customLogPaths:event.target.value.split(/\r?\n/).filter(Boolean)})} placeholder="One absolute path per line" /></label>
+        <div className="warning"><Info size={15}/>Custom paths expand local read access. Add only trusted, minimal directories.</div>
+      </div>
+      <div className="setting-section"><h3>Local model pricing</h3>
+        <div className="pricing-list">{(draft.pricing ?? []).map((price: Row, index: number) => <div className="pricing-row" key={`${price.provider}-${index}`}>
+          <span>{price.provider}</span>
+          <input aria-label={`Pricing model pattern ${index + 1}`} value={price.modelPattern} onChange={(event) => { const pricing=[...draft.pricing]; pricing[index]={...price,modelPattern:event.target.value}; setDraft({...draft,pricing}); }} />
+          <label>Input / M<input type="number" min="0" step=".001" value={price.inputPerMillion} onChange={(event) => { const pricing=[...draft.pricing]; pricing[index]={...price,inputPerMillion:Number(event.target.value)}; setDraft({...draft,pricing}); }} /></label>
+          <label>Output / M<input type="number" min="0" step=".001" value={price.outputPerMillion} onChange={(event) => { const pricing=[...draft.pricing]; pricing[index]={...price,outputPerMillion:Number(event.target.value)}; setDraft({...draft,pricing}); }} /></label>
+          <small>Effective {price.effectiveFrom}</small>
+        </div>)}</div>
+        <button className="secondary-button add-pricing" onClick={() => setDraft({...draft,pricing:[...(draft.pricing ?? []),{provider:"openai",modelPattern:"new-model",inputPerMillion:0,outputPerMillion:0,effectiveFrom:new Date().toISOString().slice(0,10)}]})}>+ Add model</button>
+      </div>
+      <div className="setting-section"><h3>Data tools</h3><div className="export-buttons"><a href="/api/export?format=json"><Download size={15}/>Export JSON</a><a href="/api/export?format=csv"><Download size={15}/>Export CSV</a></div>
+        {!deleteConfirm ? <button className="danger-link" onClick={() => setDeleteConfirm(true)}><Trash2 size={15}/>Delete all local usage data</button> :
+        <div className="confirm-delete"><span>This action resets the local database.</span><button onClick={async () => { await api("/api/data",{method:"DELETE",body:JSON.stringify({confirmation:"DELETE ALL LOCAL DATA"})}); client.invalidateQueries(); setDeleteConfirm(false); }}>Confirm delete</button></div>}
+      </div>
+    </div>
+    <div className="drawer-footer"><button className="secondary-button" onClick={close}>Cancel</button><button className="primary-button" onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save locally"}</button></div>
+  </aside></div>;
+}
+
+function Dashboard() {
+  const [page, setPage] = useState("overview");
+  const [range, setRange] = useState<RangeKey>("7d");
+  const [provider, setProvider] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [projectId, setProjectId] = useState<string>();
+  const filterWindow = useMemo(() => {
+    const end = dashboardAnchorTime;
+    const duration = rangeMilliseconds(range);
+    return { start: new Date(end - duration).toISOString(), previousStart: new Date(end - duration * 2).toISOString(), previousEnd: new Date(end - duration).toISOString() };
+  }, [range]);
+  const filters = useMemo(
+    () => `from=${encodeURIComponent(filterWindow.start)}&interval=${intervalFor(range)}${provider ? `&provider=${provider}` : ""}`,
+    [filterWindow, range, provider]
+  );
+  const previousFilters = useMemo(
+    () => `from=${encodeURIComponent(filterWindow.previousStart)}&to=${encodeURIComponent(filterWindow.previousEnd)}&interval=${intervalFor(range)}${provider ? `&provider=${provider}` : ""}`,
+    [filterWindow, range, provider]
+  );
+  const dayWindows = useMemo(() => {
+    const today = new Date(dashboardAnchorTime); today.setHours(0, 0, 0, 0);
+    const yesterday = new Date(today.getTime() - 86_400_000);
+    return {
+      today: `from=${encodeURIComponent(today.toISOString())}${provider ? `&provider=${provider}` : ""}`,
+      yesterday: `from=${encodeURIComponent(yesterday.toISOString())}&to=${encodeURIComponent(today.toISOString())}${provider ? `&provider=${provider}` : ""}`
+    };
+  }, [provider]);
+  const status = useQuery({ queryKey: ["status"], queryFn: () => api<Row>("/api/status"), refetchInterval: 15_000 });
+  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api<Row>("/api/settings") });
+  const summary = useQuery({ queryKey: ["summary", filters], queryFn: () => api<Row>(`/api/usage/summary?${filters}`) });
+  const previousSummary = useQuery({ queryKey: ["summary", previousFilters], queryFn: () => api<Row>(`/api/usage/summary?${previousFilters}`) });
+  const todaySummary = useQuery({ queryKey: ["summary", dayWindows.today], queryFn: () => api<Row>(`/api/usage/summary?${dayWindows.today}`) });
+  const yesterdaySummary = useQuery({ queryKey: ["summary", dayWindows.yesterday], queryFn: () => api<Row>(`/api/usage/summary?${dayWindows.yesterday}`) });
+  const timeline = useQuery({ queryKey: ["timeline", filters], queryFn: () => api<Row[]>(`/api/usage/timeline?${filters}`) });
+  const breakdown = useQuery({ queryKey: ["breakdown", filters], queryFn: () => api<Row[]>(`/api/usage/breakdown?${filters}`) });
+  const projects = useQuery({ queryKey: ["projects"], queryFn: () => api<Row[]>("/api/projects") });
+  const sessions = useQuery({ queryKey: ["sessions"], queryFn: () => api<Row[]>("/api/sessions") });
+  const activity = useQuery({ queryKey: ["activity"], queryFn: () => api<Row[]>("/api/activity") });
+
+  useEffect(() => {
+    const source = new EventSource("/api/events");
+    const refresh = () => {
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["timeline"] });
+      queryClient.invalidateQueries({ queryKey: ["activity"] });
+    };
+    source.addEventListener("usage", refresh);
+    source.addEventListener("settings", refresh);
+    return () => source.close();
+  }, []);
+
+  const s = summary.data ?? {};
+  const previous = previousSummary.data ?? {};
+  const current = projects.data ?? [];
+  const todayTokens = todaySummary.data?.totalTokens ?? 0;
+  const codexLimits = status.data?.providers?.find((item: Row) => item.provider === "codex")?.usageLimits;
+  const codexQuota = codexLimits?.primary ?? codexLimits?.secondary;
+  return <div className="app-shell">
+    <Sidebar page={page} setPage={setPage} mobileOpen={mobileOpen} close={() => setMobileOpen(false)} />
+    <div className="main-shell">
+      <Header status={status.data} settings={settings.data} openSettings={() => setSettingsOpen(true)} openMenu={() => setMobileOpen(true)} />
+      <main>
+        {page === "overview" && <>
+          <div className="page-heading"><div><span className="eyebrow">LOCAL WORKSPACE</span><h1>Token intelligence, <em>without the telemetry.</em></h1><p>A live view of Codex and Claude Code usage on this machine.</p></div><div className="heading-actions"><span className="date-chip"><Clock3 size={15}/>{new Date().toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}</span><a className="secondary-button" href="/api/export?format=json"><Download size={15}/>Export</a></div></div>
+          <div className="metric-grid">
+            <OverviewCard label="Tokens today" value={number(todayTokens)} icon={Zap} delta={percentageChange(todayTokens, yesterdaySummary.data?.totalTokens ?? 0)} hint="vs yesterday" accent="lime" />
+            <OverviewCard label={`Tokens · ${range.toUpperCase()}`} value={number(s.totalTokens)} icon={BarChart3} delta={percentageChange(s.totalTokens, previous.totalTokens)} hint="vs prior period" />
+            <OverviewCard label="Input tokens" value={number(s.inputTokens)} icon={TerminalSquare} delta={percentageChange(s.inputTokens, previous.inputTokens)} hint={`${Math.round((s.inputTokens || 0)/(s.totalTokens || 1)*100)}% of total`} />
+            <OverviewCard label="Output tokens" value={number(s.outputTokens)} icon={Sparkles} delta={percentageChange(s.outputTokens, previous.outputTokens)} hint={`${Math.round((s.outputTokens || 0)/(s.totalTokens || 1)*100)}% of total`} />
+            <OverviewCard label="Cache tokens" value={number(s.cacheTokens)} icon={Database} delta={percentageChange(s.cacheTokens, previous.cacheTokens)} hint="read + write" />
+            <OverviewCard label="Estimated cost" value={money(s.estimatedCost)} icon={CircleDollarSign} delta={percentageChange(s.estimatedCost, previous.estimatedCost)} hint="local pricing" />
+            <OverviewCard
+              label="Codex usage limit"
+              value={codexQuota ? `${Math.round(codexQuota.usedPercent)}% used` : "Unavailable"}
+              icon={Gauge}
+              hint={codexQuota
+                ? `${Math.max(0, Math.round(100 - codexQuota.usedPercent))}% left · ${windowLabel(codexQuota.windowMinutes)}`
+                : "not reported by Codex"}
+              accent="quota"
+            />
+            <OverviewCard label="Active sessions" value={number(status.data?.activeSessions || sessions.data?.filter((item) => item.status === "running").length || 0)} icon={Activity} hint="current snapshot" />
+            <OverviewCard label="Active projects" value={number(current.length)} icon={FolderGit2} hint={`${s.exactRate || 0}% exact data`} />
+          </div>
+          <div className="dashboard-grid"><UsageChart data={timeline.data ?? []} range={range} setRange={setRange} provider={provider} setProvider={setProvider} loading={timeline.isLoading}/><ProviderBreakdown rows={breakdown.data ?? []}/></div>
+          <ProjectTable projects={current} onSelect={(row) => setProjectId(row.id)} limit={5}/>
+          <div className="bottom-grid"><SessionTable sessions={(sessions.data ?? []).slice(0, 5)}/><ActivityFeed activity={activity.data ?? []}/></div>
+        </>}
+        {page === "projects" && <><div className="page-heading"><div><span className="eyebrow">WORKSPACE INDEX</span><h1>Projects</h1><p>Every detected workspace, with usage and accuracy at a glance.</p></div></div><ProjectTable projects={current} onSelect={(row) => setProjectId(row.id)}/></>}
+        {page === "sessions" && <><div className="page-heading"><div><span className="eyebrow">LOCAL HISTORY</span><h1>Sessions</h1><p>Provider metadata only. Prompts and responses are never stored.</p></div></div><SessionTable sessions={sessions.data ?? []}/></>}
+        {page === "diagnostics" && <DiagnosticsPage/>}
+      </main>
+    </div>
+    {settingsOpen && settings.data && <SettingsDrawer settings={settings.data} close={() => setSettingsOpen(false)}/>}
+    {projectId && <ProjectDetail projectId={projectId} close={() => setProjectId(undefined)}/>}
+  </div>;
+}
+
+createRoot(document.getElementById("root")!).render(<React.StrictMode><QueryClientProvider client={queryClient}><Dashboard/></QueryClientProvider></React.StrictMode>);
