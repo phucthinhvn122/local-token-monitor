@@ -30,6 +30,7 @@ packages/
   collectors/             resilient JSONL parser, watcher, collector manager
   provider-codex/         Codex installation/source/session adapter
   provider-claude/        Claude Code installation/source/session adapter
+  provider-quota/         third-party research, header/body parsers, safe GET adapter
   shared-types/           Zod schemas and stable interfaces
   token-estimator/        optional local fallback and pricing calculation
 tests/
@@ -47,6 +48,8 @@ tests/
 - `settings`: JSON values for local configuration.
 - `ignored_projects`: hidden projects.
 - `aliases`: user-defined display names.
+- `third_party_provider_configs`: public URL/protocol policy and API-key environment-variable name; never the key value.
+- `provider_quota_snapshots`: normalized, sanitized quota/header snapshots.
 
 Indexes cover event timestamp, provider, project, session, and session/project relationships. Foreign keys and WAL are enabled. Demo rows carry `is_demo=1` and API queries select exactly one data mode.
 
@@ -61,6 +64,10 @@ The adapter locates the executable with the operating system command resolver, o
 The adapter uses the same binary/process strategy and checks `~/.claude/projects`, `~/.claude/sessions`, platform configuration/data roots, and user-supplied paths.
 
 Both adapters consider only recent `.json`/`.jsonl` candidates, ignore `.env`, cap discovery, and expose checked/found paths through redacted diagnostics.
+
+### Third-party quota
+
+FreeModel and NTTCodex use bundled Level 0 research. Generic OpenAI/Anthropic adapters parse only recognized rate-limit headers and response usage objects. Direct fetching requires an explicit HTTPS quota endpoint, environment-based credential, and network opt-in. There is no authenticated dashboard scraping, cookie reuse, or automatic inference request.
 
 ## Accuracy and totals
 

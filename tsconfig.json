@@ -18,6 +18,7 @@
       "@ltm/collectors": ["packages/collectors/src/index.ts"],
       "@ltm/provider-codex": ["packages/provider-codex/src/index.ts"],
       "@ltm/provider-claude": ["packages/provider-claude/src/index.ts"],
+      "@ltm/provider-quota": ["packages/provider-quota/src/index.ts"],
       "@ltm/token-estimator": ["packages/token-estimator/src/index.ts"]
     }
   },

@@ -13,9 +13,14 @@ Please use GitHub private vulnerability reporting when the repository is publish
 - The server forces `127.0.0.1` unless both local configuration and environment opt in to network access.
 - There is no telemetry, third-party analytics, cloud upload, or automatic crash reporting.
 - Request authorization, cookies, and API-key headers are redacted from server logs.
+- Third-party API secrets are accepted only through a named environment variable; the browser never receives the secret value.
+- Provider quota requests are manual HTTPS `GET` requests. Redirects, query strings, embedded credentials, loopback, and obvious private-network targets are rejected.
+- Authentication failures stop without retry; `429 Retry-After` creates a refresh cooldown.
 - Provider processes are read-only: the scanner never kills, pauses, injects, or modifies them.
 - `.env`, repository source trees, and arbitrary home-directory traversal are outside collector discovery.
 - Parser errors and diagnostic paths pass through secret and username redaction.
 - SQLite uses foreign keys, WAL, parameterized statements, and a unique event fingerprint.
 
 Custom log paths expand what the application can read. Add only trusted, minimal directories.
+
+Custom quota endpoints expand outbound network access. Configure only a provider-documented, read-only endpoint. Never use an inference endpoint merely to sample rate-limit headers, and never paste cookies or dashboard session tokens.

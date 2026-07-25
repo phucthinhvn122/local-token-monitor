@@ -12,6 +12,7 @@ Local Token Monitor is a privacy-first dashboard for understanding token usage f
 - Discovers recent JSON/JSONL session sources through provider-specific candidate paths.
 - Separates input, output, cache read/write, reasoning, and total tokens.
 - Shows the latest Codex usage-limit percentage and window when Codex reports it.
+- Adds a **Third-party Providers** page for FreeModel, NTTCodex, and generic OpenAI/Anthropic-compatible services, with source, confidence, freshness, and strict `Unavailable` states.
 - Labels every value as **Exact**, **Derived**, **Estimated**, or **Unavailable**.
 - Links usage to projects when safe working-directory metadata is available.
 - Live updates over Server-Sent Events, with time/provider/project filters.
@@ -58,6 +59,9 @@ npx local-token-monitor open
 npx local-token-monitor doctor
 npx local-token-monitor export
 npx local-token-monitor reset --yes
+npx local-token-monitor provider discover freemodel
+npx local-token-monitor provider discover nttcodex
+npx local-token-monitor provider status
 ```
 
 ### Contributor development
@@ -80,7 +84,7 @@ Development uses the Vite UI on port 3456 and the loopback-only API on port 3457
 5. SQLite deduplicates events with a SHA-256 fingerprint and aggregates the dashboard.
 6. The browser subscribes to local SSE updates. There are no outbound application requests.
 
-See [Architecture](docs/ARCHITECTURE.md) for module boundaries and the collection pipeline.
+See [Architecture](docs/ARCHITECTURE.md) for module boundaries and the collection pipeline. Third-party quota support is documented in [Provider research](docs/THIRD_PARTY_PROVIDER_RESEARCH.md) and [Provider configuration](docs/THIRD_PARTY_PROVIDERS.md).
 
 ## Privacy
 
@@ -96,6 +100,8 @@ Read [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) before enabling cus
 | Claude Code | Assistant message `usage` metadata | `claude-message-usage-v1` | Defensive, fixture-tested |
 | Both | Read-only process metadata | matcher v1 | Windows/macOS/Linux |
 | Both | Local fallback estimator | UTF-8 byte heuristic | Disabled by default, always Estimated |
+| FreeModel / NTTCodex | Public capability research | Level 0, no authentication | Verified domain; remaining quota unavailable without an official endpoint |
+| Compatible APIs | Response rate-limit headers and usage bodies | Defensive JSON/SSE parser | User-configured, network off by default |
 
 Exact support depends on provider versions and fields actually present. No token count is invented when metadata is absent.
 
@@ -105,6 +111,7 @@ Exact support depends on provider versions and fields actually present. No token
 - WSL sources are not mounted or scanned automatically. Add an explicit readable custom path when appropriate.
 - Codex/Claude session formats can change without notice. Unknown formats are skipped rather than guessed.
 - Default pricing is a local, editable estimate with an effective date; the app never calls a pricing API automatically.
+- FreeModel and NTTCodex do not currently expose a verified public quota/balance endpoint in the researched materials. The dashboard does not scrape authenticated pages or infer a balance.
 - Collector setting changes and port changes currently take effect after restart.
 
 ## Adding a provider adapter

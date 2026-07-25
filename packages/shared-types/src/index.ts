@@ -130,6 +130,7 @@ export interface AppSettings {
   privacyMode: boolean;
   demoMode: boolean;
   allowNetwork: boolean;
+  providerNetworkEnabled: boolean;
   customProviderPaths: string[];
   customLogPaths: string[];
 }
@@ -154,4 +155,154 @@ export interface UsageFilters {
   model?: string;
   accuracy?: Accuracy;
   interval?: string;
+}
+
+export const ThirdPartyProviderIdSchema = z.enum([
+  "freemodel",
+  "nttcodex",
+  "openai-compatible",
+  "anthropic-compatible"
+]);
+export const QuotaConfidenceSchema = z.enum(["high", "medium", "low", "none"]);
+export const QuotaStatusSchema = z.enum(["available", "partial", "unavailable", "unverified", "error"]);
+export const QuotaMetricKindSchema = z.enum([
+  "requests",
+  "tokens",
+  "input-tokens",
+  "output-tokens",
+  "credits",
+  "currency",
+  "context-tokens",
+  "observed-usage"
+]);
+export const QuotaSourceKindSchema = z.enum([
+  "official-doc",
+  "official-header",
+  "official-api",
+  "provider-dashboard",
+  "configured-endpoint",
+  "local-observation"
+]);
+
+export const QuotaMetricSchema = z.object({
+  kind: QuotaMetricKindSchema,
+  label: z.string().min(1),
+  limit: z.number().nonnegative().optional(),
+  used: z.number().nonnegative().optional(),
+  remaining: z.number().nonnegative().optional(),
+  unit: z.string().min(1),
+  window: z.string().optional(),
+  resetsAt: z.string().datetime().optional(),
+  model: z.string().optional()
+});
+
+export const QuotaEvidenceSchema = z.object({
+  kind: QuotaSourceKindSchema,
+  label: z.string().min(1),
+  url: z.string().url().optional(),
+  isOfficial: z.boolean(),
+  observedAt: z.string().datetime()
+});
+
+export const ProviderQuotaSnapshotSchema = z.object({
+  providerId: ThirdPartyProviderIdSchema,
+  displayName: z.string().min(1),
+  status: QuotaStatusSchema,
+  confidence: QuotaConfidenceSchema,
+  partial: z.boolean(),
+  fetchedAt: z.string().datetime(),
+  endpoint: z.string().url().optional(),
+  protocol: z.enum(["openai", "anthropic", "unknown"]),
+  metrics: z.array(QuotaMetricSchema),
+  sources: z.array(QuotaEvidenceSchema),
+  httpStatus: z.number().int().min(100).max(599).optional(),
+  retryAfterAt: z.string().datetime().optional(),
+  error: z.string().optional(),
+  warnings: z.array(z.string()).default([])
+});
+
+const ProviderUrlSchema = z.string().url().refine((value) => {
+  const url = new URL(value);
+  const host = url.hostname.toLowerCase();
+  return (
+    url.protocol === "https:" &&
+    !url.username &&
+    !url.password &&
+    !url.search &&
+    host !== "localhost" &&
+    host !== "::1" &&
+    !host.endsWith(".local") &&
+    !/^127\./.test(host) &&
+    !/^10\./.test(host) &&
+    !/^192\.168\./.test(host) &&
+    !/^169\.254\./.test(host) &&
+    !/^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  );
+}, "Provider URL must be public HTTPS and contain no credentials or query parameters");
+
+export const ThirdPartyProviderConfigSchema = z.object({
+  id: ThirdPartyProviderIdSchema,
+  adapterId: z.enum(["freemodel", "nttcodex", "openai-compatible", "anthropic-compatible"]),
+  displayName: z.string().trim().min(1).max(80),
+  baseUrl: ProviderUrlSchema.optional(),
+  quotaEndpoint: ProviderUrlSchema.optional(),
+  apiKeyEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(),
+  protocol: z.enum(["openai", "anthropic", "unknown"]),
+  enabled: z.boolean(),
+  refreshIntervalMinutes: z.number().int().min(1).max(1440),
+  endpointVerified: z.boolean().default(false)
+});
+
+export type ThirdPartyProviderId = z.infer<typeof ThirdPartyProviderIdSchema>;
+export type QuotaConfidence = z.infer<typeof QuotaConfidenceSchema>;
+export type QuotaStatus = z.infer<typeof QuotaStatusSchema>;
+export type QuotaMetricKind = z.infer<typeof QuotaMetricKindSchema>;
+export type QuotaSourceKind = z.infer<typeof QuotaSourceKindSchema>;
+export type QuotaMetric = z.infer<typeof QuotaMetricSchema>;
+export type QuotaEvidence = z.infer<typeof QuotaEvidenceSchema>;
+export type ProviderQuotaSnapshot = z.infer<typeof ProviderQuotaSnapshotSchema>;
+export type ThirdPartyProviderConfig = z.infer<typeof ThirdPartyProviderConfigSchema>;
+
+export interface ProviderDetectionResult {
+  providerId: ThirdPartyProviderId;
+  domainStatus: "verified" | "unverified";
+  reachable: boolean | "not-checked";
+  publicBaseUrl?: string;
+  notes: string[];
+  evidence: QuotaEvidence[];
+}
+
+export interface ProviderCapabilities {
+  providerId: ThirdPartyProviderId;
+  protocols: Array<"openai" | "anthropic">;
+  inferenceEndpoints: string[];
+  quotaEndpointVerified: boolean;
+  canParseHeaders: boolean;
+  canParseBodies: boolean;
+  canFetchDirectly: boolean;
+}
+
+export interface ProviderQuotaDiagnostics {
+  providerId: ThirdPartyProviderId;
+  networkDefault: "disabled";
+  credentialSource: "environment-only";
+  quotaEndpoint: "verified" | "configured-unverified" | "unavailable";
+  lastError?: string;
+  warnings: string[];
+}
+
+export interface QuotaFetchContext {
+  allowNetwork: boolean;
+  now?: Date;
+  fetcher?: typeof fetch;
+}
+
+export interface QuotaProviderAdapter {
+  readonly id: ThirdPartyProviderId;
+  detect(): Promise<ProviderDetectionResult>;
+  capabilities(): ProviderCapabilities;
+  fetchQuota(context: QuotaFetchContext): Promise<ProviderQuotaSnapshot>;
+  parseResponseHeaders(headers: Headers | Record<string, string | undefined>, observedAt?: Date): ProviderQuotaSnapshot;
+  parseResponseBody(body: unknown, observedAt?: Date): ProviderQuotaSnapshot;
+  diagnostics(): ProviderQuotaDiagnostics;
 }

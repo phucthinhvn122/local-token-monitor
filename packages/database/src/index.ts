@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -6,9 +6,15 @@ import type {
   AppSettings,
   DetectedSession,
   ModelPricing,
+  ProviderQuotaSnapshot,
   ProjectInfo,
+  ThirdPartyProviderConfig,
   TokenUsageEvent,
   UsageFilters
+} from "@ltm/shared-types";
+import {
+  ProviderQuotaSnapshotSchema,
+  ThirdPartyProviderConfigSchema
 } from "@ltm/shared-types";
 import { calculateCost } from "@ltm/token-estimator";
 import { fingerprint, privacyProject } from "@ltm/core";
@@ -30,6 +36,7 @@ const defaults: AppSettings = {
   privacyMode: false,
   demoMode: process.env.LTM_DEMO_MODE === "true",
   allowNetwork: false,
+  providerNetworkEnabled: false,
   customProviderPaths: [],
   customLogPaths: []
 };
@@ -53,8 +60,10 @@ export class MonitorDatabase {
   }
 
   migrate(): void {
-    const migrationPath = path.join(import.meta.dirname, "migrations", "001_initial.sql");
-    this.db.exec(readFileSync(migrationPath, "utf8"));
+    const migrationsPath = path.join(import.meta.dirname, "migrations");
+    for (const file of readdirSync(migrationsPath).filter((name) => name.endsWith(".sql")).sort()) {
+      this.db.exec(readFileSync(path.join(migrationsPath, file), "utf8"));
+    }
   }
 
   private seedPricing(): void {
@@ -127,6 +136,108 @@ export class MonitorDatabase {
       this.db.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  ensureThirdPartyProviderConfigs(configs: ThirdPartyProviderConfig[]): void {
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO third_party_provider_configs
+       (id,adapter_id,display_name,base_url,quota_endpoint,api_key_env,protocol,enabled,refresh_interval_minutes,endpoint_verified,updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+    );
+    const now = new Date().toISOString();
+    for (const input of configs) {
+      const config = ThirdPartyProviderConfigSchema.parse(input);
+      insert.run(
+        config.id,
+        config.adapterId,
+        config.displayName,
+        config.baseUrl ?? null,
+        config.quotaEndpoint ?? null,
+        config.apiKeyEnv ?? null,
+        config.protocol,
+        config.enabled ? 1 : 0,
+        config.refreshIntervalMinutes,
+        config.endpointVerified ? 1 : 0,
+        now
+      );
+    }
+  }
+
+  thirdPartyProviderConfigs(): ThirdPartyProviderConfig[] {
+    return (this.db.prepare(
+      "SELECT * FROM third_party_provider_configs ORDER BY CASE id WHEN 'freemodel' THEN 1 WHEN 'nttcodex' THEN 2 ELSE 3 END, id"
+    ).all() as Row[]).map((row) => ThirdPartyProviderConfigSchema.parse({
+      id: row.id,
+      adapterId: row.adapter_id,
+      displayName: row.display_name,
+      baseUrl: row.base_url ?? undefined,
+      quotaEndpoint: row.quota_endpoint ?? undefined,
+      apiKeyEnv: row.api_key_env ?? undefined,
+      protocol: row.protocol,
+      enabled: Boolean(row.enabled),
+      refreshIntervalMinutes: Number(row.refresh_interval_minutes),
+      endpointVerified: Boolean(row.endpoint_verified)
+    }));
+  }
+
+  updateThirdPartyProviderConfig(id: ThirdPartyProviderConfig["id"], patch: Partial<ThirdPartyProviderConfig>): ThirdPartyProviderConfig {
+    const existing = this.thirdPartyProviderConfigs().find((item) => item.id === id);
+    if (!existing) throw new Error("Third-party provider config not found.");
+    const config = ThirdPartyProviderConfigSchema.parse({ ...existing, ...patch, id, adapterId: existing.adapterId });
+    this.db.prepare(
+      `UPDATE third_party_provider_configs
+       SET display_name=?,base_url=?,quota_endpoint=?,api_key_env=?,protocol=?,enabled=?,refresh_interval_minutes=?,endpoint_verified=?,updated_at=?
+       WHERE id=?`
+    ).run(
+      config.displayName,
+      config.baseUrl ?? null,
+      config.quotaEndpoint ?? null,
+      config.apiKeyEnv ?? null,
+      config.protocol,
+      config.enabled ? 1 : 0,
+      config.refreshIntervalMinutes,
+      config.endpointVerified ? 1 : 0,
+      new Date().toISOString(),
+      id
+    );
+    return config;
+  }
+
+  saveProviderQuotaSnapshot(input: ProviderQuotaSnapshot): ProviderQuotaSnapshot {
+    const snapshot = ProviderQuotaSnapshotSchema.parse(input);
+    this.db.prepare(
+      `INSERT INTO provider_quota_snapshots(provider_id,snapshot_json,observed_at)
+       VALUES (?,?,?)
+       ON CONFLICT(provider_id) DO UPDATE SET snapshot_json=excluded.snapshot_json,observed_at=excluded.observed_at`
+    ).run(snapshot.providerId, JSON.stringify(snapshot), snapshot.fetchedAt);
+    return snapshot;
+  }
+
+  providerQuotaSnapshot(id: ThirdPartyProviderConfig["id"]): ProviderQuotaSnapshot | undefined {
+    const row = this.db.prepare(
+      "SELECT snapshot_json FROM provider_quota_snapshots WHERE provider_id=?"
+    ).get(id) as Row | undefined;
+    if (!row) return undefined;
+    try {
+      return ProviderQuotaSnapshotSchema.parse(JSON.parse(String(row.snapshot_json)));
+    } catch {
+      return undefined;
+    }
+  }
+
+  providerQuotaSnapshots(): ProviderQuotaSnapshot[] {
+    const rows = this.db.prepare("SELECT snapshot_json FROM provider_quota_snapshots ORDER BY observed_at DESC").all() as Row[];
+    return rows.flatMap((row) => {
+      try {
+        return [ProviderQuotaSnapshotSchema.parse(JSON.parse(String(row.snapshot_json)))];
+      } catch {
+        return [];
+      }
+    });
+  }
+
+  deleteProviderQuotaSnapshot(id: ThirdPartyProviderConfig["id"]): void {
+    this.db.prepare("DELETE FROM provider_quota_snapshots WHERE provider_id=?").run(id);
   }
 
   upsertProvider(id: "codex" | "claude", installed: boolean, version?: string): void {
@@ -344,6 +455,7 @@ export class MonitorDatabase {
   reset(realOnly = false): void {
     const clause = realOnly ? " WHERE is_demo=0" : "";
     this.db.exec(`DELETE FROM token_usage_events${clause}; DELETE FROM sessions${clause}; DELETE FROM projects${clause};`);
+    if (!realOnly) this.db.exec("DELETE FROM provider_quota_snapshots;");
     if (!realOnly) this.seedDemo();
   }
 

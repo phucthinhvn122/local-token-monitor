@@ -10,6 +10,7 @@ export default defineConfig({
       "@ltm/collectors": path.resolve("packages/collectors/src/index.ts"),
       "@ltm/provider-codex": path.resolve("packages/provider-codex/src/index.ts"),
       "@ltm/provider-claude": path.resolve("packages/provider-claude/src/index.ts"),
+      "@ltm/provider-quota": path.resolve("packages/provider-quota/src/index.ts"),
       "@ltm/token-estimator": path.resolve("packages/token-estimator/src/index.ts")
     }
   },

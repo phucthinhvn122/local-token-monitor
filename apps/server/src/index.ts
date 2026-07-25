@@ -10,8 +10,18 @@ import { MonitorDatabase } from "@ltm/database";
 import { CollectorManager } from "@ltm/collectors";
 import { CodexAdapter } from "@ltm/provider-codex";
 import { ClaudeAdapter } from "@ltm/provider-claude";
+import {
+  bundledProviderConfigs,
+  createQuotaAdapter,
+  providerResearch
+} from "@ltm/provider-quota";
 import { safeError } from "@ltm/core";
-import type { AppSettings, UsageFilters } from "@ltm/shared-types";
+import {
+  ThirdPartyProviderIdSchema,
+  type AppSettings,
+  type ThirdPartyProviderConfig,
+  type UsageFilters
+} from "@ltm/shared-types";
 
 const QuerySchema = z.object({
   from: z.string().datetime().optional(),
@@ -35,8 +45,37 @@ const SettingsPatchSchema = z.object({
   privacyMode: z.boolean().optional(),
   demoMode: z.boolean().optional(),
   allowNetwork: z.boolean().optional(),
+  providerNetworkEnabled: z.boolean().optional(),
   customProviderPaths: z.array(z.string().max(1000)).max(30).optional(),
   customLogPaths: z.array(z.string().max(1000)).max(30).optional()
+}).strict();
+
+const HttpsUrlSchema = z.string().url().refine((value) => {
+  const url = new URL(value);
+  const host = url.hostname.toLowerCase();
+  return (
+    url.protocol === "https:" &&
+    !url.username &&
+    !url.password &&
+    !url.search &&
+    host !== "localhost" &&
+    host !== "::1" &&
+    !host.endsWith(".local") &&
+    !/^127\./.test(host) &&
+    !/^10\./.test(host) &&
+    !/^192\.168\./.test(host) &&
+    !/^169\.254\./.test(host) &&
+    !/^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  );
+}, "URL must be public HTTPS and contain no credentials or query parameters");
+const ThirdPartyConfigPatchSchema = z.object({
+  displayName: z.string().trim().min(1).max(80).optional(),
+  baseUrl: HttpsUrlSchema.nullable().optional(),
+  quotaEndpoint: HttpsUrlSchema.nullable().optional(),
+  apiKeyEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).nullable().optional(),
+  protocol: z.enum(["openai", "anthropic", "unknown"]).optional(),
+  enabled: z.boolean().optional(),
+  refreshIntervalMinutes: z.number().int().min(1).max(1440).optional()
 }).strict();
 
 function parseFilters(request: FastifyRequest): UsageFilters {
@@ -45,6 +84,7 @@ function parseFilters(request: FastifyRequest): UsageFilters {
 
 export async function startServer(options: { port?: number; host?: string; openBrowser?: boolean } = {}) {
   const database = new MonitorDatabase();
+  database.ensureThirdPartyProviderConfigs(bundledProviderConfigs);
   const settings = database.getSettings();
   const port = options.port ?? Number(process.env.LTM_PORT || settings.port || 3456);
   const requestedHost = options.host ?? process.env.LTM_HOST ?? "127.0.0.1";
@@ -75,6 +115,19 @@ export async function startServer(options: { port?: number; host?: string; openB
   const manager = new CollectorManager(database, adapters, publish);
   let collectorError: string | undefined;
 
+  const thirdPartyView = async (config: ThirdPartyProviderConfig) => {
+    const adapter = createQuotaAdapter(config);
+    return {
+      config,
+      research: providerResearch[config.id],
+      detection: await adapter.detect(),
+      capabilities: adapter.capabilities(),
+      diagnostics: adapter.diagnostics(),
+      credentialConfigured: Boolean(config.apiKeyEnv && process.env[config.apiKeyEnv]),
+      snapshot: database.providerQuotaSnapshot(config.id)
+    };
+  };
+
   app.get("/api/health", async () => ({
     status: "ok",
     timestamp: new Date().toISOString(),
@@ -101,6 +154,85 @@ export async function startServer(options: { port?: number; host?: string; openB
   });
 
   app.get("/api/providers", async (request) => database.breakdown(parseFilters(request)));
+  app.get("/api/third-party/providers", async () =>
+    Promise.all(database.thirdPartyProviderConfigs().map(thirdPartyView))
+  );
+  app.get("/api/third-party/providers/:id", async (request, reply) => {
+    const id = ThirdPartyProviderIdSchema.parse((request.params as { id: string }).id);
+    const config = database.thirdPartyProviderConfigs().find((item) => item.id === id);
+    return config ? thirdPartyView(config) : reply.code(404).send({ error: "Third-party provider not found" });
+  });
+  app.patch("/api/third-party/providers/:id", async (request, reply) => {
+    const id = ThirdPartyProviderIdSchema.parse((request.params as { id: string }).id);
+    const body = ThirdPartyConfigPatchSchema.parse(request.body);
+    const existing = database.thirdPartyProviderConfigs().find((item) => item.id === id);
+    if (!existing) return reply.code(404).send({ error: "Third-party provider not found" });
+    const patch: Partial<ThirdPartyProviderConfig> = { ...body } as Partial<ThirdPartyProviderConfig>;
+    if ("baseUrl" in body) patch.baseUrl = body.baseUrl ?? undefined;
+    if ("quotaEndpoint" in body) patch.quotaEndpoint = body.quotaEndpoint ?? undefined;
+    if ("apiKeyEnv" in body) patch.apiKeyEnv = body.apiKeyEnv ?? undefined;
+    if ("quotaEndpoint" in body && body.quotaEndpoint !== existing.quotaEndpoint) patch.endpointVerified = false;
+    const updated = database.updateThirdPartyProviderConfig(id, patch);
+    database.deleteProviderQuotaSnapshot(id);
+    publish({ type: "settings", provider: id, message: `${updated.displayName} provider settings updated`, timestamp: new Date().toISOString() });
+    return thirdPartyView(updated);
+  });
+  app.post("/api/third-party/providers/:id/discover", async (request, reply) => {
+    const id = ThirdPartyProviderIdSchema.parse((request.params as { id: string }).id);
+    const { level } = z.object({ level: z.number().int().min(0).max(3).default(0) }).parse(request.body ?? {});
+    const config = database.thirdPartyProviderConfigs().find((item) => item.id === id);
+    if (!config) return reply.code(404).send({ error: "Third-party provider not found" });
+    const adapter = createQuotaAdapter(config);
+    return {
+      requestedLevel: level,
+      executedLevel: 0,
+      networkRequestSent: false,
+      notice: level === 0
+        ? "Public documentation research only."
+        : "Levels 1-3 require explicit endpoint and credential authorization; only Level 0 was executed.",
+      detection: await adapter.detect(),
+      capabilities: adapter.capabilities(),
+      diagnostics: adapter.diagnostics(),
+      research: providerResearch[id]
+    };
+  });
+  app.post("/api/third-party/providers/:id/refresh", async (request, reply) => {
+    const id = ThirdPartyProviderIdSchema.parse((request.params as { id: string }).id);
+    const config = database.thirdPartyProviderConfigs().find((item) => item.id === id);
+    if (!config) return reply.code(404).send({ error: "Third-party provider not found" });
+    const previous = database.providerQuotaSnapshot(id);
+    if (previous?.retryAfterAt && new Date(previous.retryAfterAt).getTime() > Date.now()) {
+      return reply.code(429).send({
+        error: "Refresh is paused until the provider Retry-After time.",
+        retryAfterAt: previous.retryAfterAt,
+        snapshot: previous
+      });
+    }
+    if (previous) {
+      const nextManualRefreshAt = new Date(
+        new Date(previous.fetchedAt).getTime() + config.refreshIntervalMinutes * 60_000
+      );
+      if (nextManualRefreshAt.getTime() > Date.now()) {
+        return reply.code(429).send({
+          error: `Manual refresh is limited to once every ${config.refreshIntervalMinutes} minute(s).`,
+          retryAfterAt: nextManualRefreshAt.toISOString(),
+          snapshot: previous
+        });
+      }
+    }
+    const providerNetworkEnabled =
+      process.env.LTM_PROVIDER_NETWORK === "true" ||
+      database.getSettings().providerNetworkEnabled;
+    const snapshot = await createQuotaAdapter(config).fetchQuota({ allowNetwork: providerNetworkEnabled });
+    database.saveProviderQuotaSnapshot(snapshot);
+    publish({
+      type: "provider-quota",
+      provider: id,
+      message: `${config.displayName}: ${snapshot.status}`,
+      timestamp: snapshot.fetchedAt
+    });
+    return { snapshot, networkEnabled: providerNetworkEnabled };
+  });
   app.get("/api/projects", async () => database.projects());
   app.get("/api/projects/:id", async (request, reply) => {
     const result = database.project((request.params as { id: string }).id);
@@ -161,6 +293,7 @@ export async function startServer(options: { port?: number; host?: string; openB
     nodeVersion: process.version,
     databasePath: settings.privacyMode ? "[private database path]" : database.path,
     collectors: await manager.diagnostics(),
+    thirdPartyProviders: database.thirdPartyProviderConfigs().map((config) => createQuotaAdapter(config).diagnostics()),
     collectorError,
     localOnly: host === "127.0.0.1"
   }));
@@ -172,6 +305,7 @@ export async function startServer(options: { port?: number; host?: string; openB
       arch: process.arch,
       nodeVersion: process.version,
       collectors: await manager.diagnostics(),
+      thirdPartyProviders: database.thirdPartyProviderConfigs().map((config) => createQuotaAdapter(config).diagnostics()),
       settings: { ...database.getSettings(), databasePath: "[REDACTED]", customProviderPaths: [], customLogPaths: [] }
     };
     reply.header("content-disposition", 'attachment; filename="local-token-monitor-diagnostics.json"');

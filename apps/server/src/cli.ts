@@ -5,12 +5,19 @@ import os from "node:os";
 import path from "node:path";
 import open from "open";
 
-const command = process.argv.slice(2).find((argument) => !argument.startsWith("-")) ?? "start";
+const rawArgs = process.argv.slice(2);
+const positionalArgs = rawArgs.filter((argument) => !argument.startsWith("-"));
+const command = positionalArgs[0] ?? "start";
 const runtimeDir = path.join(os.homedir(), ".local-token-monitor");
 const statePath = path.join(runtimeDir, "server.json");
 const startLockPath = path.join(runtimeDir, "start.lock");
 const noOpen = process.argv.includes("--no-open");
 const forceOpen = process.argv.includes("--open");
+
+function optionValue(name: string): string | undefined {
+  const prefix = `--${name}=`;
+  return rawArgs.find((argument) => argument.startsWith(prefix))?.slice(prefix.length);
+}
 
 function state(): { pid: number; host: string; port: number } | undefined {
   try { return JSON.parse(readFileSync(statePath, "utf8")); } catch { return undefined; }
@@ -75,6 +82,85 @@ async function reportRunning(url: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  if (command === "provider") {
+    const action = positionalArgs[1] ?? "status";
+    const [{ MonitorDatabase }, quotaModule, sharedTypes] = await Promise.all([
+      import("@ltm/database"),
+      import("@ltm/provider-quota"),
+      import("@ltm/shared-types")
+    ]);
+    const database = new MonitorDatabase();
+    database.ensureThirdPartyProviderConfigs(quotaModule.bundledProviderConfigs);
+    try {
+      if (action === "status") {
+        const result = database.thirdPartyProviderConfigs().map((config) => ({
+          id: config.id,
+          displayName: config.displayName,
+          enabled: config.enabled,
+          baseUrl: config.baseUrl,
+          quotaEndpoint: config.quotaEndpoint,
+          protocol: config.protocol,
+          credentialSource: config.apiKeyEnv ? `environment:${config.apiKeyEnv}` : "not-configured",
+          credentialConfigured: Boolean(config.apiKeyEnv && process.env[config.apiKeyEnv]),
+          snapshot: database.providerQuotaSnapshot(config.id) ?? null
+        }));
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      if (action !== "discover" && action !== "test") {
+        console.error("Usage: local-token-monitor provider [discover <id>|test <id>|status]");
+        process.exitCode = 2;
+        return;
+      }
+      const target = positionalArgs[2];
+      if (!target) {
+        console.error(`Provider ${action} requires one of: freemodel, nttcodex, openai-compatible, anthropic-compatible`);
+        process.exitCode = 2;
+        return;
+      }
+      const id = sharedTypes.ThirdPartyProviderIdSchema.parse(target);
+      const stored = database.thirdPartyProviderConfigs().find((item) => item.id === id);
+      if (!stored) throw new Error(`Unknown provider: ${id}`);
+      const protocolOption = optionValue("protocol");
+      const config = sharedTypes.ThirdPartyProviderConfigSchema.parse({
+        ...stored,
+        baseUrl: optionValue("base-url") ?? stored.baseUrl,
+        quotaEndpoint: optionValue("endpoint") ?? stored.quotaEndpoint,
+        apiKeyEnv: optionValue("api-key-env") ?? stored.apiKeyEnv,
+        protocol: protocolOption ?? stored.protocol,
+        enabled: true,
+        endpointVerified: false
+      });
+      const adapter = quotaModule.createQuotaAdapter(config);
+      if (action === "discover") {
+        const requestedLevel = Number(optionValue("level") ?? 0);
+        if (!Number.isInteger(requestedLevel) || requestedLevel < 0 || requestedLevel > 3) {
+          console.error("Discovery level must be 0, 1, 2, or 3.");
+          process.exitCode = 2;
+          return;
+        }
+        console.log(JSON.stringify({
+          requestedLevel,
+          executedLevel: 0,
+          networkRequestSent: false,
+          detection: await adapter.detect(),
+          capabilities: adapter.capabilities(),
+          diagnostics: adapter.diagnostics(),
+          research: quotaModule.providerResearch[id]
+        }, null, 2));
+        return;
+      }
+      const snapshot = await adapter.fetchQuota({
+        allowNetwork: rawArgs.includes("--allow-network")
+      });
+      database.saveProviderQuotaSnapshot(snapshot);
+      console.log(JSON.stringify(snapshot, null, 2));
+      if (snapshot.status === "error") process.exitCode = 1;
+      return;
+    } finally {
+      database.close();
+    }
+  }
   if (command === "start") {
     const existing = state();
     if (existing && running(existing.pid)) {
@@ -199,7 +285,7 @@ async function main(): Promise<void> {
     console.log("Local data reset. Demo data was restored.");
     return;
   }
-  console.log("Usage: local-token-monitor [start|stop|status|open|doctor|export|reset]");
+  console.log("Usage: local-token-monitor [start|stop|status|open|doctor|export|reset|provider]");
 }
 
 void main();

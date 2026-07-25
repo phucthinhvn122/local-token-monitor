@@ -4,8 +4,8 @@ import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient
 import {
   Activity, BarChart3, Bell, Bot, CircleDollarSign, Clock3, Database,
   Download, EyeOff, FolderGit2, Gauge, HardDrive, Info, LayoutDashboard, Menu,
-  MoreHorizontal, RefreshCw, Search, Server, Settings, ShieldCheck, Sparkles,
-  TerminalSquare, Trash2, X, Zap
+  MoreHorizontal, PlugZap, RefreshCw, Search, Server, Settings, ShieldCheck, Sparkles,
+  TerminalSquare, Trash2, X, Zap, ExternalLink, KeyRound
 } from "lucide-react";
 import {
   Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis
@@ -82,6 +82,7 @@ function Sidebar({ page, setPage, mobileOpen, close }: { page: string; setPage: 
     ["overview", LayoutDashboard, "Overview"],
     ["projects", FolderGit2, "Projects"],
     ["sessions", TerminalSquare, "Sessions"],
+    ["providers", PlugZap, "Third-party"],
     ["diagnostics", Gauge, "Diagnostics"]
   ] as const;
   return <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>
@@ -272,6 +273,122 @@ function DiagnosticsPage() {
   </div>;
 }
 
+function ProviderMetric({ metric }: { metric: Row }) {
+  const primary = metric.remaining !== undefined
+    ? `${number(metric.remaining)} left`
+    : metric.used !== undefined ? `${number(metric.used)} used` : "Unavailable";
+  return <div className="quota-metric">
+    <span>{metric.label}</span>
+    <strong>{primary}</strong>
+    <small>
+      {metric.limit !== undefined ? `${number(metric.limit)} limit` : metric.unit}
+      {metric.resetsAt ? ` · resets ${ago(metric.resetsAt)}` : ""}
+    </small>
+  </div>;
+}
+
+function ThirdPartyProviderCard({ row }: { row: Row }) {
+  const client = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(row.config);
+  const refresh = useMutation({
+    mutationFn: () => api<Row>(`/api/third-party/providers/${row.config.id}/refresh`, {
+      method: "POST",
+      body: "{}"
+    }),
+    onSettled: () => client.invalidateQueries({ queryKey: ["third-party-providers"] })
+  });
+  const discover = useMutation({
+    mutationFn: () => api<Row>(`/api/third-party/providers/${row.config.id}/discover`, {
+      method: "POST",
+      body: JSON.stringify({ level: 0 })
+    })
+  });
+  const save = useMutation({
+    mutationFn: () => api<Row>(`/api/third-party/providers/${row.config.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        displayName: draft.displayName,
+        baseUrl: draft.baseUrl || null,
+        quotaEndpoint: draft.quotaEndpoint || null,
+        apiKeyEnv: draft.apiKeyEnv || null,
+        protocol: draft.protocol,
+        enabled: Boolean(draft.enabled),
+        refreshIntervalMinutes: Number(draft.refreshIntervalMinutes || 15)
+      })
+    }),
+    onSuccess: (updated) => {
+      setDraft(updated.config);
+      setEditing(false);
+      client.invalidateQueries({ queryKey: ["third-party-providers"] });
+    }
+  });
+  const snapshot = row.snapshot;
+  const status = snapshot?.status ?? (row.research.domainStatus === "verified" ? "unavailable" : "unverified");
+  const metrics = snapshot?.metrics ?? [];
+  const sources = snapshot?.sources?.length ? snapshot.sources : row.research.evidence;
+  return <section className="panel third-party-card">
+    <div className="provider-card-head">
+      <div className="third-party-logo"><PlugZap size={19}/></div>
+      <div><h2>{row.config.displayName}</h2><span>{row.research.domain || "Custom provider"}</span></div>
+      <span className={`provider-state state-${status}`}>{status}</span>
+    </div>
+    <div className="provider-facts">
+      <div><span>Protocol</span><strong>{row.config.protocol}</strong></div>
+      <div><span>Domain</span><strong>{row.research.domainStatus}</strong></div>
+      <div><span>Credential</span><strong>{row.credentialConfigured ? "Environment ready" : row.config.apiKeyEnv ? "Environment missing" : "Not configured"}</strong></div>
+      <div><span>Confidence</span><strong>{snapshot?.confidence ?? "none"}</strong></div>
+    </div>
+    <div className="provider-endpoint"><code>{row.config.baseUrl || "Base URL unavailable"}</code></div>
+    <div className="quota-metrics">
+      {metrics.length ? metrics.map((metric: Row, index: number) => <ProviderMetric key={`${metric.kind}-${index}`} metric={metric}/>) :
+        <div className="provider-unavailable"><Gauge size={20}/><div><strong>Remaining quota unavailable</strong><span>{snapshot?.error ?? "No official quota or balance endpoint has been verified."}</span></div></div>}
+    </div>
+    {(snapshot?.warnings ?? row.research.notes).slice(0, 2).map((warning: string) =>
+      <div className="provider-warning" key={warning}><Info size={14}/><span>{warning}</span></div>)}
+    <div className="provider-evidence">
+      <span>Evidence</span>
+      {sources.slice(0, 3).map((source: Row) => source.url
+        ? <a href={source.url} target="_blank" rel="noreferrer" key={source.url}>{source.label}<ExternalLink size={11}/></a>
+        : <small key={source.label}>{source.label}</small>)}
+    </div>
+    {snapshot && <div className="provider-freshness">Last checked {ago(snapshot.fetchedAt)} · {snapshot.partial ? "partial snapshot" : "complete snapshot"}</div>}
+    {discover.data && <div className="discovery-result">Level {discover.data.executedLevel} · no network request sent · {discover.data.capabilities?.quotaEndpointVerified ? "quota endpoint verified" : "quota endpoint not verified"}</div>}
+    {(refresh.error || save.error) && <div className="provider-api-error">{(refresh.error ?? save.error)?.message}</div>}
+    <div className="provider-actions">
+      <button className="secondary-button" onClick={() => discover.mutate()} disabled={discover.isPending}><Search size={14}/>{discover.isPending ? "Checking…" : "Discover L0"}</button>
+      <button className="secondary-button" onClick={() => refresh.mutate()} disabled={refresh.isPending}><RefreshCw size={14}/>{refresh.isPending ? "Refreshing…" : "Manual refresh"}</button>
+      <button className="secondary-button" onClick={() => { if (!editing) setDraft(row.config); setEditing(!editing); }}><Settings size={14}/>{editing ? "Close" : "Configure"}</button>
+    </div>
+    {editing && <div className="provider-config">
+      <label>Display name<input value={draft.displayName} onChange={(event) => setDraft({...draft,displayName:event.target.value})}/></label>
+      <label>Protocol<select value={draft.protocol} onChange={(event) => setDraft({...draft,protocol:event.target.value})}><option value="unknown">Unknown</option><option value="openai">OpenAI-compatible</option><option value="anthropic">Anthropic-compatible</option></select></label>
+      <label className="wide">Base URL<input value={draft.baseUrl ?? ""} onChange={(event) => setDraft({...draft,baseUrl:event.target.value})} placeholder="https://provider.example/v1"/></label>
+      <label className="wide">Quota endpoint<input value={draft.quotaEndpoint ?? ""} onChange={(event) => setDraft({...draft,quotaEndpoint:event.target.value})} placeholder="Only a documented HTTPS GET endpoint"/></label>
+      <label className="wide">API key environment variable<div className="env-input"><KeyRound size={14}/><input value={draft.apiKeyEnv ?? ""} onChange={(event) => setDraft({...draft,apiKeyEnv:event.target.value})} placeholder="PROVIDER_API_KEY"/></div></label>
+      <label>Minimum refresh (minutes)<input type="number" min="1" max="1440" value={draft.refreshIntervalMinutes} onChange={(event) => setDraft({...draft,refreshIntervalMinutes:event.target.value})}/></label>
+      <label className="provider-enabled"><input type="checkbox" checked={Boolean(draft.enabled)} onChange={(event) => setDraft({...draft,enabled:event.target.checked})}/> Enabled</label>
+      <div className="provider-config-note"><ShieldCheck size={14}/>Only the environment variable name is saved. Its value never enters this page or SQLite.</div>
+      <button className="primary-button wide" onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save provider settings"}</button>
+    </div>}
+  </section>;
+}
+
+function ThirdPartyProvidersPage() {
+  const { data, isLoading, refetch, isFetching } = useQuery({
+    queryKey: ["third-party-providers"],
+    queryFn: () => api<Row[]>("/api/third-party/providers"),
+    staleTime: 60_000
+  });
+  return <div className="third-party-page">
+    <div className="page-heading"><div><span className="eyebrow">VERIFIABLE QUOTA</span><h1>Third-party Providers</h1><p>Provider-reported limits only. Missing evidence stays unavailable.</p></div><button className="secondary-button" onClick={() => refetch()} disabled={isFetching}><RefreshCw size={15}/>{isFetching ? "Loading…" : "Reload local state"}</button></div>
+    <div className="third-party-principles">
+      <ShieldCheck size={18}/><div><strong>Network off by default</strong><span>Discovery uses bundled public research. Manual refresh sends only a GET request to an explicitly configured HTTPS quota endpoint.</span></div>
+    </div>
+    {isLoading ? <Skeleton className="page-skeleton"/> : <div className="third-party-grid">{(data ?? []).map((row) => <ThirdPartyProviderCard row={row} key={row.config.id}/>)}</div>}
+  </div>;
+}
+
 function SettingsDrawer({ settings, close }: { settings: Row; close: () => void }) {
   const client = useQueryClient();
   const [draft, setDraft] = useState(settings);
@@ -283,6 +400,7 @@ function SettingsDrawer({ settings, close }: { settings: Row; close: () => void 
         codexCollectorEnabled: Boolean(draft.codexCollectorEnabled), claudeCollectorEnabled: Boolean(draft.claudeCollectorEnabled),
         tokenEstimationEnabled: Boolean(draft.tokenEstimationEnabled), costEstimationEnabled: Boolean(draft.costEstimationEnabled),
         privacyMode: Boolean(draft.privacyMode), demoMode: Boolean(draft.demoMode), allowNetwork: Boolean(draft.allowNetwork),
+        providerNetworkEnabled: Boolean(draft.providerNetworkEnabled),
         customProviderPaths: draft.customProviderPaths ?? [], customLogPaths: draft.customLogPaths ?? []
       }) }),
       api("/api/settings/pricing", { method: "PUT", body: JSON.stringify(draft.pricing ?? []) })
@@ -300,6 +418,7 @@ function SettingsDrawer({ settings, close }: { settings: Row; close: () => void 
       <div className="setting-section"><h3>Privacy & estimates</h3><div className="setting-row"><div><strong>Privacy Mode</strong><span>Hide paths, remotes, usernames and full IDs.</span></div>{toggle("privacyMode")}</div>
         <div className="setting-row"><div><strong>Token estimation</strong><span>Fallback only; always labeled Estimated.</span></div>{toggle("tokenEstimationEnabled")}</div>
         <div className="setting-row"><div><strong>Cost estimation</strong><span>Use the editable local pricing table.</span></div>{toggle("costEstimationEnabled")}</div>
+        <div className="setting-row"><div><strong>Provider network</strong><span>Allow manual third-party quota GET requests. Discovery stays local.</span></div>{toggle("providerNetworkEnabled")}</div>
       </div>
       <div className="setting-section"><h3>Server & storage</h3><div className="field-grid"><label>Dashboard port<input type="number" value={draft.port} onChange={(e) => setDraft({...draft,port:e.target.value})}/></label><label>Retention (days)<input type="number" value={draft.retentionDays} onChange={(e) => setDraft({...draft,retentionDays:e.target.value})}/></label><label>Polling (ms)<input type="number" value={draft.pollingIntervalMs} onChange={(e) => setDraft({...draft,pollingIntervalMs:e.target.value})}/></label></div>
         <div className="locked-path"><Database size={15}/><span>{draft.databasePath}</span></div>
@@ -418,6 +537,7 @@ function Dashboard() {
         </>}
         {page === "projects" && <><div className="page-heading"><div><span className="eyebrow">WORKSPACE INDEX</span><h1>Projects</h1><p>Every detected workspace, with usage and accuracy at a glance.</p></div></div><ProjectTable projects={current} onSelect={(row) => setProjectId(row.id)}/></>}
         {page === "sessions" && <><div className="page-heading"><div><span className="eyebrow">LOCAL HISTORY</span><h1>Sessions</h1><p>Provider metadata only. Prompts and responses are never stored.</p></div></div><SessionTable sessions={sessions.data ?? []}/></>}
+        {page === "providers" && <ThirdPartyProvidersPage/>}
         {page === "diagnostics" && <DiagnosticsPage/>}
       </main>
     </div>
