@@ -15,6 +15,7 @@ import {
   createQuotaAdapter,
   fetchAntigravityQuotaStatus,
   fetchNxtCodexQuotaStatus,
+  NttCodexBrowserBridge,
   providerResearch
 } from "@ltm/provider-quota";
 import { safeError } from "@ltm/core";
@@ -109,6 +110,17 @@ export async function startServer(options: { port?: number; host?: string; openB
     const payload = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
     for (const client of clients) client.raw.write(payload);
   };
+  const nttcodexBrowser = new NttCodexBrowserBridge({
+    onSnapshot: (snapshot) => {
+      database.saveProviderQuotaSnapshot(snapshot);
+      publish({
+        type: "provider-quota",
+        provider: "nttcodex",
+        message: `NTTCodex: ${snapshot.status}`,
+        timestamp: snapshot.fetchedAt
+      });
+    }
+  });
   const customPaths = [...settings.customProviderPaths, ...settings.customLogPaths];
   const adapters = [
     new CodexAdapter(customPaths.filter((candidate) => /codex/i.test(candidate))),
@@ -126,6 +138,7 @@ export async function startServer(options: { port?: number; host?: string; openB
       capabilities: adapter.capabilities(),
       diagnostics: adapter.diagnostics(),
       credentialConfigured: Boolean(config.apiKeyEnv && process.env[config.apiKeyEnv]),
+      browserBridge: config.id === "nttcodex" ? nttcodexBrowser.status() : undefined,
       snapshot: database.providerQuotaSnapshot(config.id)
     };
   };
@@ -282,6 +295,42 @@ export async function startServer(options: { port?: number; host?: string; openB
       diagnostics: adapter.diagnostics(),
       research: providerResearch[id]
     };
+  });
+  app.get("/api/third-party/providers/nttcodex/browser", async () => nttcodexBrowser.status());
+  app.post("/api/third-party/providers/nttcodex/browser/connect", async (request, reply) => {
+    if (host !== "127.0.0.1") {
+      return reply.code(403).send({ error: "Browser connection is available only on the local-only server." });
+    }
+    const body = z.object({
+      confirm: z.literal("CONNECT NTTCODEX"),
+      refreshSeconds: z.number().int().min(10).max(300).default(30)
+    }).strict().parse(request.body);
+    try {
+      const snapshot = await nttcodexBrowser.connect(body.refreshSeconds);
+      return { snapshot, browserBridge: nttcodexBrowser.status() };
+    } catch (error) {
+      return reply.code(409).send({
+        error: safeError(error),
+        browserBridge: nttcodexBrowser.status()
+      });
+    }
+  });
+  app.post("/api/third-party/providers/nttcodex/browser/refresh", async (request, reply) => {
+    z.object({ confirm: z.literal("REFRESH NTTCODEX") }).strict().parse(request.body);
+    try {
+      const snapshot = await nttcodexBrowser.refresh();
+      return { snapshot, browserBridge: nttcodexBrowser.status() };
+    } catch (error) {
+      return reply.code(409).send({
+        error: safeError(error),
+        browserBridge: nttcodexBrowser.status()
+      });
+    }
+  });
+  app.post("/api/third-party/providers/nttcodex/browser/disconnect", async (request) => {
+    z.object({ confirm: z.literal("DISCONNECT NTTCODEX") }).strict().parse(request.body);
+    await nttcodexBrowser.disconnect();
+    return { ok: true, browserBridge: nttcodexBrowser.status() };
   });
   app.post("/api/third-party/providers/:id/refresh", async (request, reply) => {
     const id = ThirdPartyProviderIdSchema.parse((request.params as { id: string }).id);
@@ -472,6 +521,7 @@ export async function startServer(options: { port?: number; host?: string; openB
   });
 
   const close = async () => {
+    await nttcodexBrowser.disconnect();
     await manager.stop();
     database.close();
   };

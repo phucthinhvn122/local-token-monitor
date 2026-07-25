@@ -14,6 +14,13 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
 export {
+  NttCodexBrowserBridge,
+  parseNttCodexAccountKeys,
+  type NttCodexBrowserBridgeOptions,
+  type NttCodexBrowserStatus
+} from "./nttcodex-browser.js";
+
+export {
   discoverAntigravityAuthTokens,
   discoverCodexAuthTokens,
   fetchAntigravityQuotaStatus,
@@ -135,6 +142,7 @@ export const providerResearch: Record<ThirdPartyProviderId, ProviderResearchReco
     domain: "nttcodex.com",
     domainStatus: "verified",
     publicBaseUrl: "https://nttcodex.com/v1",
+    quotaEndpoint: "https://nttcodex.com/account/keys",
     protocols: [],
     inferenceEndpoints: [],
     quotaEndpointVerified: false,
@@ -142,7 +150,7 @@ export const providerResearch: Record<ThirdPartyProviderId, ProviderResearchReco
     automationAllowed: "not-documented",
     notes: [
       "The official public site describes API keys, package quota, token history, and a /v1 base URL in its public page configuration.",
-      "No public protocol specification or quota API endpoint was verified. Authenticated dashboard automation is disabled."
+      "The official account UI reads GET /account/keys with the signed-in web session. The optional local browser bridge can aggregate its quota fields without importing cookie values."
     ],
     evidence: [
       {
@@ -156,6 +164,13 @@ export const providerResearch: Record<ThirdPartyProviderId, ProviderResearchReco
         kind: "official-doc",
         label: "NTTCodex public usage guide",
         url: "https://nttcodex.com/user/huong-dan",
+        isOfficial: true,
+        observedAt
+      },
+      {
+        kind: "provider-dashboard",
+        label: "NTTCodex account keys dashboard endpoint",
+        url: "https://nttcodex.com/account/keys",
         isOfficial: true,
         observedAt
       }

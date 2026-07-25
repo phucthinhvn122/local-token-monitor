@@ -14,6 +14,7 @@ Local Token Monitor is a privacy-first dashboard for understanding token usage f
 - Separates input, output, cache read/write, reasoning, and total tokens.
 - Shows the latest Codex usage-limit percentage and window when Codex reports it.
 - Adds a **Third-party Providers** page for FreeModel, NTTCodex, and generic OpenAI/Anthropic-compatible services, with source, confidence, freshness, and strict `Unavailable` states.
+- NTTCodex can optionally connect through a dedicated visible browser window, read the signed-in `/account/keys` quota JSON without importing cookies, and refresh aggregate daily/monthly usage every 30 seconds.
 - Labels every value as **Exact**, **Derived**, **Estimated**, or **Unavailable**.
 - Links usage to projects when safe working-directory metadata is available.
 - Live updates over Server-Sent Events, with time/provider/project filters.
@@ -146,7 +147,7 @@ Exact support depends on provider versions and fields actually present. No token
 - WSL sources are not mounted or scanned automatically. Add an explicit readable custom path when appropriate.
 - Codex/Claude session formats can change without notice. Unknown formats are skipped rather than guessed.
 - Default pricing is a local, editable estimate with an effective date; the app never calls a pricing API automatically.
-- FreeModel and NTTCodex do not currently expose a verified public quota/balance endpoint in the researched materials. The dashboard does not scrape authenticated pages or infer a balance.
+- FreeModel does not currently expose a verified public quota/balance endpoint in the researched materials. NTTCodex account quota requires its optional local browser connection; without that explicit connection it remains unavailable.
 - Collector setting changes and port changes currently take effect after restart.
 
 ## Adding a provider adapter

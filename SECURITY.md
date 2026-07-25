@@ -14,6 +14,7 @@ Please use GitHub private vulnerability reporting when the repository is publish
 - There is no telemetry, third-party analytics, cloud upload, or automatic crash reporting.
 - Request authorization, cookies, and API-key headers are redacted from server logs.
 - Third-party API secrets are accepted only through a named environment variable; the browser never receives the secret value.
+- The optional NTTCodex browser bridge uses a dedicated visible browser profile and same-origin `GET /account/keys`; the monitor never reads cookie values, passwords, or API key values from the response.
 - Provider quota requests are manual HTTPS `GET` requests. Redirects, query strings, embedded credentials, loopback, and obvious private-network targets are rejected.
 - Authentication failures stop without retry; `429 Retry-After` creates a refresh cooldown.
 - Provider processes are read-only: the scanner never kills, pauses, injects, or modifies them.
@@ -23,4 +24,4 @@ Please use GitHub private vulnerability reporting when the repository is publish
 
 Custom log paths expand what the application can read. Add only trusted, minimal directories.
 
-Custom quota endpoints expand outbound network access. Configure only a provider-documented, read-only endpoint. Never use an inference endpoint merely to sample rate-limit headers, and never paste cookies or dashboard session tokens.
+Custom quota endpoints expand outbound network access. Configure only a provider-documented, read-only endpoint. Never use an inference endpoint merely to sample rate-limit headers, and never paste cookies or dashboard session tokens. The dedicated NTTCodex browser profile is local state; sign out in that window or use **Disconnect** when you no longer want it active.

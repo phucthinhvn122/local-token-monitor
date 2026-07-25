@@ -109,13 +109,13 @@ Use this only on your own account and only when the provider permits it:
 5. Do not copy cookies, authorization values, request bodies, HAR files, local storage, or response data containing personal information.
 6. If the value exists only in rendered HTML or the endpoint contract is unclear, stop and leave the provider `Unavailable`.
 
-The module intentionally has no cookie-import or browser-session feature.
+The module never imports a cookie value. For NTTCodex, the optional **Connect browser** action opens a dedicated visible Chrome/Edge/Chromium profile. You sign in on the provider page, and same-origin code reads only `GET /account/keys`. Raw account responses, API key values, cookie values, and passwords are discarded; only aggregate quota metrics enter SQLite. Keep that browser window open for the 30-second live refresh, or click **Disconnect** to close it.
 
 ## Network and failure behavior
 
 - HTTPS only; embedded credentials, query strings, loopback, and obvious private-network targets are rejected.
 - Redirects are rejected.
-- Manual refresh only; the UI does not poll provider endpoints and the server enforces the configured minimum refresh interval.
+- Generic provider endpoints are manual-refresh only. The explicitly connected NTTCodex browser bridge refreshes every 30 seconds while its dedicated window is open.
 - DNS is resolved before a real request and private/reserved results are rejected to reduce SSRF and DNS-rebinding risk.
 - Response bodies are capped at 1 MB.
 - `401`/`403` stops immediately without retry.
@@ -131,10 +131,10 @@ The module intentionally has no cookie-import or browser-session feature.
 | Public provider pages | Read-only Level 0 research |
 | Configured quota endpoint | One explicit HTTPS `GET` after opt-in |
 | API key | Read from named process environment variable only |
-| Provider cookies/session | No access |
+| Provider cookies/session | Managed by the dedicated browser profile; cookie values are never read or serialized by the monitor |
 | Provider dashboard DOM | No automation |
 | SQLite | Provider metadata and sanitized snapshots only |
-| Browser storage | No credentials or provider snapshots |
+| Browser storage | NTTCodex session remains in the dedicated local browser profile; provider snapshots are not stored there |
 
 ## Validation
 

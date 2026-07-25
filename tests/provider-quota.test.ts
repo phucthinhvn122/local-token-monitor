@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CompatibleQuotaAdapter,
   parseExplicitQuotaBody,
+  parseNttCodexAccountKeys,
   parseQuotaHeaders,
   parseResetAt,
   parseUsageBody
@@ -137,6 +138,61 @@ describe("usage body parsing", () => {
     const snapshot = parseExplicitQuotaBody("openai-compatible", "openai", {
       data: { remaining: 999, total: 1000 }
     }, now);
+    expect(snapshot.status).toBe("unavailable");
+    expect(snapshot.metrics).toEqual([]);
+  });
+});
+
+describe("NTTCodex account keys parsing", () => {
+  it("aggregates daily and monthly quota without retaining key or account fields", () => {
+    const snapshot = parseNttCodexAccountKeys({
+      keys: [
+        {
+          id: 12,
+          name: "private-key-name",
+          api_key: "sk-must-not-be-stored",
+          daily_token_limit: 5_000_000,
+          used_today: 1_000_000,
+          monthly_token_limit: 150_000_000,
+          used_month: 25_000_000
+        },
+        {
+          id: 13,
+          name: "another-private-name",
+          daily_token_limit: 100_000_000,
+          used_today: 1_270_394,
+          used_month: 1_270_394
+        }
+      ],
+      account: { username: "must-not-be-stored" }
+    }, now);
+
+    expect(snapshot.status).toBe("available");
+    expect(snapshot.metrics[0]).toMatchObject({
+      limit: 105_000_000,
+      used: 2_270_394,
+      remaining: 102_729_606,
+      window: "day"
+    });
+    expect(snapshot.metrics[1]).toMatchObject({
+      limit: 150_000_000,
+      used: 25_000_000,
+      remaining: 125_000_000,
+      window: "month"
+    });
+    expect(snapshot.metrics[2]).toMatchObject({
+      used: 1_270_394,
+      label: "This month · metered usage",
+      window: "month"
+    });
+    const serialized = JSON.stringify(snapshot);
+    expect(serialized).not.toContain("sk-must-not-be-stored");
+    expect(serialized).not.toContain("private-key-name");
+    expect(serialized).not.toContain("must-not-be-stored");
+  });
+
+  it("rejects changed or ambiguous schemas instead of inventing quota", () => {
+    const snapshot = parseNttCodexAccountKeys({ data: { remaining: 999 } }, now);
     expect(snapshot.status).toBe("unavailable");
     expect(snapshot.metrics).toEqual([]);
   });

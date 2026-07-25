@@ -293,12 +293,36 @@ function ThirdPartyProviderCard({ row }: { row: Row }) {
   const client = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(row.config);
+  const isNttCodex = row.config.id === "nttcodex";
+  const browserBridge = row.browserBridge ?? { state: "disconnected", windowOpen: false, refreshSeconds: 30 };
+  const invalidate = () => client.invalidateQueries({ queryKey: ["third-party-providers"] });
   const refresh = useMutation({
     mutationFn: () => api<Row>(`/api/third-party/providers/${row.config.id}/refresh`, {
       method: "POST",
       body: "{}"
     }),
-    onSettled: () => client.invalidateQueries({ queryKey: ["third-party-providers"] })
+    onSettled: invalidate
+  });
+  const connectBrowser = useMutation({
+    mutationFn: () => api<Row>("/api/third-party/providers/nttcodex/browser/connect", {
+      method: "POST",
+      body: JSON.stringify({ confirm: "CONNECT NTTCODEX", refreshSeconds: 30 })
+    }),
+    onSettled: invalidate
+  });
+  const syncBrowser = useMutation({
+    mutationFn: () => api<Row>("/api/third-party/providers/nttcodex/browser/refresh", {
+      method: "POST",
+      body: JSON.stringify({ confirm: "REFRESH NTTCODEX" })
+    }),
+    onSettled: invalidate
+  });
+  const disconnectBrowser = useMutation({
+    mutationFn: () => api<Row>("/api/third-party/providers/nttcodex/browser/disconnect", {
+      method: "POST",
+      body: JSON.stringify({ confirm: "DISCONNECT NTTCODEX" })
+    }),
+    onSettled: invalidate
   });
   const discover = useMutation({
     mutationFn: () => api<Row>(`/api/third-party/providers/${row.config.id}/discover`, {
@@ -322,7 +346,7 @@ function ThirdPartyProviderCard({ row }: { row: Row }) {
     onSuccess: (updated) => {
       setDraft(updated.config);
       setEditing(false);
-      client.invalidateQueries({ queryKey: ["third-party-providers"] });
+      invalidate();
     }
   });
   const snapshot = row.snapshot;
@@ -338,10 +362,10 @@ function ThirdPartyProviderCard({ row }: { row: Row }) {
     <div className="provider-facts">
       <div><span>Protocol</span><strong>{row.config.protocol}</strong></div>
       <div><span>Domain</span><strong>{row.research.domainStatus}</strong></div>
-      <div><span>Credential</span><strong>{row.credentialConfigured ? "Environment ready" : row.config.apiKeyEnv ? "Environment missing" : "Not configured"}</strong></div>
+      <div><span>Credential</span><strong>{isNttCodex ? `Browser ${browserBridge.state}` : row.credentialConfigured ? "Environment ready" : row.config.apiKeyEnv ? "Environment missing" : "Not configured"}</strong></div>
       <div><span>Confidence</span><strong>{snapshot?.confidence ?? "none"}</strong></div>
     </div>
-    <div className="provider-endpoint"><code>{row.config.baseUrl || "Base URL unavailable"}</code></div>
+    <div className="provider-endpoint"><code>{isNttCodex ? "https://nttcodex.com/account/keys" : row.config.baseUrl || "Base URL unavailable"}</code></div>
     <div className="quota-metrics">
       {metrics.length ? metrics.map((metric: Row, index: number) => <ProviderMetric key={`${metric.kind}-${index}`} metric={metric}/>) :
         <div className="provider-unavailable"><Gauge size={20}/><div><strong>Remaining quota unavailable</strong><span>{snapshot?.error ?? "No official quota or balance endpoint has been verified."}</span></div></div>}
@@ -356,21 +380,47 @@ function ThirdPartyProviderCard({ row }: { row: Row }) {
     </div>
     {snapshot && <div className="provider-freshness">Last checked {ago(snapshot.fetchedAt)} · {snapshot.partial ? "partial snapshot" : "complete snapshot"}</div>}
     {discover.data && <div className="discovery-result">Level {discover.data.executedLevel} · no network request sent · {discover.data.capabilities?.quotaEndpointVerified ? "quota endpoint verified" : "quota endpoint not verified"}</div>}
-    {(refresh.error || save.error) && <div className="provider-api-error">{(refresh.error ?? save.error)?.message}</div>}
+    {isNttCodex && <div className={`browser-bridge-strip bridge-${browserBridge.state}`}>
+      <ShieldCheck size={15}/>
+      <div>
+        <strong>{
+          browserBridge.state === "connected" ? "Browser connected" :
+          browserBridge.state === "waiting-login" ? "Waiting for you to sign in" :
+          browserBridge.state === "starting" ? "Opening a secure browser window" :
+          browserBridge.state === "error" ? "Browser connection needs attention" :
+          "Browser not connected"
+        }</strong>
+        <span>{
+          browserBridge.state === "connected"
+            ? `Quota refreshes every ${browserBridge.refreshSeconds ?? 30}s while the dedicated window stays open.`
+            : "Sign in inside the dedicated NTTCodex window. The monitor reads quota JSON only; it never receives your password or cookie value."
+        }</span>
+      </div>
+    </div>}
+    {(refresh.error || save.error || connectBrowser.error || syncBrowser.error || disconnectBrowser.error || browserBridge.lastError) &&
+      <div className="provider-api-error">{(refresh.error ?? save.error ?? connectBrowser.error ?? syncBrowser.error ?? disconnectBrowser.error)?.message ?? browserBridge.lastError}</div>}
     <div className="provider-actions">
       <button className="secondary-button" onClick={() => discover.mutate()} disabled={discover.isPending}><Search size={14}/>{discover.isPending ? "Checking…" : "Discover L0"}</button>
-      <button className="secondary-button" onClick={() => refresh.mutate()} disabled={refresh.isPending}><RefreshCw size={14}/>{refresh.isPending ? "Refreshing…" : "Manual refresh"}</button>
+      {!isNttCodex && <button className="secondary-button" onClick={() => refresh.mutate()} disabled={refresh.isPending}><RefreshCw size={14}/>{refresh.isPending ? "Refreshing…" : "Manual refresh"}</button>}
+      {isNttCodex && browserBridge.state !== "connected" &&
+        <button className="primary-button" onClick={() => connectBrowser.mutate()} disabled={connectBrowser.isPending || browserBridge.state === "starting" || browserBridge.state === "waiting-login"}>
+          <KeyRound size={14}/>{connectBrowser.isPending || browserBridge.state === "starting" || browserBridge.state === "waiting-login" ? "Waiting for login…" : "Connect browser"}
+        </button>}
+      {isNttCodex && browserBridge.state === "connected" && <>
+        <button className="secondary-button" onClick={() => syncBrowser.mutate()} disabled={syncBrowser.isPending}><RefreshCw size={14}/>{syncBrowser.isPending ? "Syncing…" : "Sync now"}</button>
+        <button className="secondary-button" onClick={() => disconnectBrowser.mutate()} disabled={disconnectBrowser.isPending}><X size={14}/>Disconnect</button>
+      </>}
       <button className="secondary-button" onClick={() => { if (!editing) setDraft(row.config); setEditing(!editing); }}><Settings size={14}/>{editing ? "Close" : "Configure"}</button>
     </div>
     {editing && <div className="provider-config">
       <label>Display name<input value={draft.displayName} onChange={(event) => setDraft({...draft,displayName:event.target.value})}/></label>
-      <label>Protocol<select value={draft.protocol} onChange={(event) => setDraft({...draft,protocol:event.target.value})}><option value="unknown">Unknown</option><option value="openai">OpenAI-compatible</option><option value="anthropic">Anthropic-compatible</option></select></label>
-      <label className="wide">Base URL<input value={draft.baseUrl ?? ""} onChange={(event) => setDraft({...draft,baseUrl:event.target.value})} placeholder="https://provider.example/v1"/></label>
-      <label className="wide">Quota endpoint<input value={draft.quotaEndpoint ?? ""} onChange={(event) => setDraft({...draft,quotaEndpoint:event.target.value})} placeholder="Only a documented HTTPS GET endpoint"/></label>
-      <label className="wide">API key environment variable<div className="env-input"><KeyRound size={14}/><input value={draft.apiKeyEnv ?? ""} onChange={(event) => setDraft({...draft,apiKeyEnv:event.target.value})} placeholder="PROVIDER_API_KEY"/></div></label>
+      {!isNttCodex && <label>Protocol<select value={draft.protocol} onChange={(event) => setDraft({...draft,protocol:event.target.value})}><option value="unknown">Unknown</option><option value="openai">OpenAI-compatible</option><option value="anthropic">Anthropic-compatible</option></select></label>}
+      {!isNttCodex && <label className="wide">Base URL<input value={draft.baseUrl ?? ""} onChange={(event) => setDraft({...draft,baseUrl:event.target.value})} placeholder="https://provider.example/v1"/></label>}
+      {!isNttCodex && <label className="wide">Quota endpoint<input value={draft.quotaEndpoint ?? ""} onChange={(event) => setDraft({...draft,quotaEndpoint:event.target.value})} placeholder="Only a documented HTTPS GET endpoint"/></label>}
+      {!isNttCodex && <label className="wide">API key environment variable<div className="env-input"><KeyRound size={14}/><input value={draft.apiKeyEnv ?? ""} onChange={(event) => setDraft({...draft,apiKeyEnv:event.target.value})} placeholder="PROVIDER_API_KEY"/></div></label>}
       <label>Minimum refresh (minutes)<input type="number" min="1" max="1440" value={draft.refreshIntervalMinutes} onChange={(event) => setDraft({...draft,refreshIntervalMinutes:event.target.value})}/></label>
       <label className="provider-enabled"><input type="checkbox" checked={Boolean(draft.enabled)} onChange={(event) => setDraft({...draft,enabled:event.target.checked})}/> Enabled</label>
-      <div className="provider-config-note"><ShieldCheck size={14}/>Only the environment variable name is saved. Its value never enters this page or SQLite.</div>
+      <div className="provider-config-note"><ShieldCheck size={14}/>{isNttCodex ? "NTTCodex authentication stays inside the dedicated browser profile. Only aggregate quota snapshots enter SQLite." : "Only the environment variable name is saved. Its value never enters this page or SQLite."}</div>
       <button className="primary-button wide" onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save provider settings"}</button>
     </div>}
   </section>;
@@ -380,12 +430,13 @@ function ThirdPartyProvidersPage() {
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["third-party-providers"],
     queryFn: () => api<Row[]>("/api/third-party/providers"),
-    staleTime: 60_000
+    staleTime: 2_000,
+    refetchInterval: 2_000
   });
   return <div className="third-party-page">
     <div className="page-heading"><div><span className="eyebrow">VERIFIABLE QUOTA</span><h1>Third-party Providers</h1><p>Provider-reported limits only. Missing evidence stays unavailable.</p></div><button className="secondary-button" onClick={() => refetch()} disabled={isFetching}><RefreshCw size={15}/>{isFetching ? "Loading…" : "Reload local state"}</button></div>
     <div className="third-party-principles">
-      <ShieldCheck size={18}/><div><strong>Network off by default</strong><span>Discovery uses bundled public research. Manual refresh sends only a GET request to an explicitly configured HTTPS quota endpoint.</span></div>
+      <ShieldCheck size={18}/><div><strong>Local and explicit</strong><span>NTTCodex browser sync starts only when you click Connect. Other providers keep network access off by default.</span></div>
     </div>
     {isLoading ? <Skeleton className="page-skeleton"/> : <div className="third-party-grid">{(data ?? []).map((row) => <ThirdPartyProviderCard row={row} key={row.config.id}/>)}</div>}
   </div>;
