@@ -62,7 +62,7 @@
     "chokidar": "^4.0.3",
     "fastify": "^5.4.0",
     "lucide-react": "^0.468.0",
-    "open": "^10.1.2",
+    "open": "^11.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "recharts": "^3.1.0",
