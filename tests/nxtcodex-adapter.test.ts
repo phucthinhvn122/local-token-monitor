@@ -160,3 +160,17 @@ describe("nxtcodex fetchNxtCodexQuotaStatus adapter", () => {
     expect(status.secondsUntilReset).toBe(60);
   });
 });
+
+describe("Antigravity fetchAntigravityQuotaStatus adapter", () => {
+  it("returns antigravity quota status", async () => {
+    const { fetchAntigravityQuotaStatus } = await import("@ltm/provider-quota");
+    const status = await fetchAntigravityQuotaStatus({
+      allowNetwork: false,
+      now,
+      customEnv: {}
+    });
+    expect(status.provider).toBe("antigravity");
+    expect(status.status).toBeDefined();
+    expect(status.checkedAt).toBeDefined();
+  });
+});

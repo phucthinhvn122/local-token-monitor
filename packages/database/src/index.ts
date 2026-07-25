@@ -558,13 +558,13 @@ export class MonitorDatabase {
     );
   }
 
-  getLatestQuotaStatus(): QuotaStatus | null {
+  getLatestQuotaStatus(provider = "nxtcodex"): QuotaStatus | null {
     const row = this.db.prepare(
-      `SELECT * FROM nxtcodex_quota_history ORDER BY checked_at DESC LIMIT 1`
-    ).get() as Row | undefined;
+      `SELECT * FROM nxtcodex_quota_history WHERE provider = ? ORDER BY checked_at DESC LIMIT 1`
+    ).get(provider) as Row | undefined;
     if (!row) return null;
     return {
-      provider: "nxtcodex",
+      provider: (row.provider as QuotaStatus["provider"]) || "nxtcodex",
       keyId: row.key_id ? String(row.key_id) : undefined,
       status: row.status as QuotaStatus["status"],
       total: row.total == null ? null : Number(row.total),
@@ -580,12 +580,12 @@ export class MonitorDatabase {
     };
   }
 
-  getQuotaHistory(limit = 50): QuotaStatus[] {
+  getQuotaHistory(provider = "nxtcodex", limit = 50): QuotaStatus[] {
     const rows = this.db.prepare(
-      `SELECT * FROM nxtcodex_quota_history ORDER BY checked_at DESC LIMIT ?`
-    ).all(limit) as Row[];
+      `SELECT * FROM nxtcodex_quota_history WHERE provider = ? ORDER BY checked_at DESC LIMIT ?`
+    ).all(provider, limit) as Row[];
     return rows.map((row) => ({
-      provider: "nxtcodex",
+      provider: (row.provider as QuotaStatus["provider"]) || "nxtcodex",
       keyId: row.key_id ? String(row.key_id) : undefined,
       status: row.status as QuotaStatus["status"],
       total: row.total == null ? null : Number(row.total),

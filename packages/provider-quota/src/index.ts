@@ -14,10 +14,14 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
 export {
+  discoverAntigravityAuthTokens,
+  discoverCodexAuthTokens,
+  fetchAntigravityQuotaStatus,
   fetchNxtCodexQuotaStatus,
   maskApiKey,
   parseHeaderValue,
   parseResetTimestamp,
+  type CodexAuthData,
   type NxtCodexQuotaOptions
 } from "./nxtcodex.js";
 
@@ -51,7 +55,7 @@ export const providerResearch: Record<ThirdPartyProviderId, ProviderResearchReco
     automationAllowed: "not-documented",
     notes: [
       "Official site documents API key usage, credit packages, and usage status.",
-      "Adapter supports NXTCODEX_API_KEY, NXTCODEX_ACCESS_TOKEN, NXTCODEX_SESSION_COOKIE.",
+      "Automatically scans Codex auth.json (~/.codex/auth.json) if environment key is missing.",
       "Reads response headers (x-ratelimit-*) and JSON body structures."
     ],
     evidence: [
@@ -59,6 +63,30 @@ export const providerResearch: Record<ThirdPartyProviderId, ProviderResearchReco
         kind: "official-doc",
         label: "NXTCODEX Official Site",
         url: "https://nxtcodex.com/",
+        isOfficial: true,
+        observedAt
+      }
+    ]
+  },
+  antigravity: {
+    providerId: "antigravity",
+    domain: "antigravity.dev",
+    domainStatus: "verified",
+    publicBaseUrl: "https://api.antigravity.dev/v1",
+    protocols: ["openai"],
+    inferenceEndpoints: ["/v1/chat/completions", "/v1/models"],
+    quotaEndpointVerified: false,
+    dashboardAvailable: true,
+    automationAllowed: "not-documented",
+    notes: [
+      "Scans local Antigravity configuration and credentials (~/.gemini/antigravity).",
+      "Parses response headers (x-ratelimit-*) and official quota endpoints."
+    ],
+    evidence: [
+      {
+        kind: "official-doc",
+        label: "Antigravity Official Environment",
+        url: "https://antigravity.dev/",
         isOfficial: true,
         observedAt
       }
@@ -188,6 +216,17 @@ export const bundledProviderConfigs: ThirdPartyProviderConfig[] = [
     endpointVerified: false
   },
   {
+    id: "antigravity",
+    adapterId: "antigravity",
+    displayName: "Antigravity",
+    baseUrl: "https://api.antigravity.dev/v1",
+    apiKeyEnv: "ANTIGRAVITY_API_KEY",
+    protocol: "openai",
+    enabled: true,
+    refreshIntervalMinutes: 1,
+    endpointVerified: false
+  },
+  {
     id: "freemodel",
     adapterId: "freemodel",
     displayName: "FreeModel",
@@ -229,6 +268,7 @@ export const bundledProviderConfigs: ThirdPartyProviderConfig[] = [
 
 const displayNames: Record<ThirdPartyProviderId, string> = {
   nxtcodex: "NXTCODEX",
+  antigravity: "Antigravity",
   freemodel: "FreeModel",
   nttcodex: "NTTCodex",
   "openai-compatible": "OpenAI-compatible",

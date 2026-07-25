@@ -13,6 +13,7 @@ import { ClaudeAdapter } from "@ltm/provider-claude";
 import {
   bundledProviderConfigs,
   createQuotaAdapter,
+  fetchAntigravityQuotaStatus,
   fetchNxtCodexQuotaStatus,
   providerResearch
 } from "@ltm/provider-quota";
@@ -136,36 +137,43 @@ export async function startServer(options: { port?: number; host?: string; openB
     localOnly: host === "127.0.0.1"
   }));
 
-  app.get("/api/quota", async () => {
-    let latest = database.getLatestQuotaStatus();
+  app.get("/api/quota", async (request) => {
+    const provider = (request.query as { provider?: string })?.provider === "antigravity" ? "antigravity" : "nxtcodex";
+    let latest = database.getLatestQuotaStatus(provider);
     if (!latest) {
       const providerNetworkEnabled =
         process.env.LTM_PROVIDER_NETWORK === "true" ||
         database.getSettings().providerNetworkEnabled;
-      latest = await fetchNxtCodexQuotaStatus({ allowNetwork: providerNetworkEnabled });
+      latest = provider === "antigravity"
+        ? await fetchAntigravityQuotaStatus({ allowNetwork: providerNetworkEnabled })
+        : await fetchNxtCodexQuotaStatus({ allowNetwork: providerNetworkEnabled });
       database.saveQuotaStatus(latest);
     }
     return latest;
   });
 
-  app.post("/api/quota/refresh", async () => {
+  app.post("/api/quota/refresh", async (request) => {
+    const provider = (request.query as { provider?: string })?.provider === "antigravity" ? "antigravity" : "nxtcodex";
     const providerNetworkEnabled =
       process.env.LTM_PROVIDER_NETWORK === "true" ||
       database.getSettings().providerNetworkEnabled;
-    const quota = await fetchNxtCodexQuotaStatus({ allowNetwork: providerNetworkEnabled });
+    const quota = provider === "antigravity"
+      ? await fetchAntigravityQuotaStatus({ allowNetwork: providerNetworkEnabled })
+      : await fetchNxtCodexQuotaStatus({ allowNetwork: providerNetworkEnabled });
     database.saveQuotaStatus(quota);
     publish({
       type: "provider-quota",
-      provider: "nxtcodex",
-      message: `NXTCODEX: ${quota.status}`,
+      provider,
+      message: `${provider.toUpperCase()}: ${quota.status}`,
       timestamp: quota.checkedAt
     });
     return quota;
   });
 
   app.get("/api/quota/history", async (request) => {
+    const provider = (request.query as { provider?: string })?.provider === "antigravity" ? "antigravity" : "nxtcodex";
     const limit = Number((request.query as { limit?: string })?.limit || 50);
-    const history = database.getQuotaHistory(limit);
+    const history = database.getQuotaHistory(provider, limit);
 
     // Compute consumption stats
     const valid = [...history]
@@ -202,7 +210,7 @@ export async function startServer(options: { port?: number; host?: string; openB
     }
 
     return {
-      provider: "nxtcodex",
+      provider,
       history,
       stats: {
         avgRatePerMinute,

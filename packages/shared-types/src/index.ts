@@ -159,6 +159,7 @@ export interface UsageFilters {
 
 export const ThirdPartyProviderIdSchema = z.enum([
   "nxtcodex",
+  "antigravity",
   "freemodel",
   "nttcodex",
   "openai-compatible",
@@ -243,7 +244,7 @@ const ProviderUrlSchema = z.string().url().refine((value) => {
 
 export const ThirdPartyProviderConfigSchema = z.object({
   id: ThirdPartyProviderIdSchema,
-  adapterId: z.enum(["nxtcodex", "freemodel", "nttcodex", "openai-compatible", "anthropic-compatible"]),
+  adapterId: z.enum(["nxtcodex", "antigravity", "freemodel", "nttcodex", "openai-compatible", "anthropic-compatible"]),
   displayName: z.string().trim().min(1).max(80),
   baseUrl: ProviderUrlSchema.optional(),
   quotaEndpoint: ProviderUrlSchema.optional(),
@@ -265,7 +266,7 @@ export type ProviderQuotaSnapshot = z.infer<typeof ProviderQuotaSnapshotSchema>;
 export type ThirdPartyProviderConfig = z.infer<typeof ThirdPartyProviderConfigSchema>;
 
 export interface QuotaStatus {
-  provider: "nxtcodex";
+  provider: "nxtcodex" | "antigravity";
   keyId?: string;
   status: "active" | "limited" | "exhausted" | "expired" | "invalid" | "unknown";
   total: number | null;
@@ -275,13 +276,13 @@ export interface QuotaStatus {
   resetAt: string | null;
   secondsUntilReset: number | null;
   checkedAt: string;
-  source: "official_api" | "response_headers" | "local_estimate";
+  source: "official_api" | "response_headers" | "local_estimate" | "auth_json";
   rawHeaders?: Record<string, string>;
   error?: string;
 }
 
 export const QuotaStatusSchema = z.object({
-  provider: z.literal("nxtcodex"),
+  provider: z.enum(["nxtcodex", "antigravity"]),
   keyId: z.string().optional(),
   status: z.enum(["active", "limited", "exhausted", "expired", "invalid", "unknown"]),
   total: z.number().nullable(),
@@ -291,7 +292,7 @@ export const QuotaStatusSchema = z.object({
   resetAt: z.string().nullable(),
   secondsUntilReset: z.number().nullable(),
   checkedAt: z.string(),
-  source: z.enum(["official_api", "response_headers", "local_estimate"]),
+  source: z.enum(["official_api", "response_headers", "local_estimate", "auth_json"]),
   rawHeaders: z.record(z.string()).optional(),
   error: z.string().optional()
 });

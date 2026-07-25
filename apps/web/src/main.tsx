@@ -451,6 +451,7 @@ function SettingsDrawer({ settings, close }: { settings: Row; close: () => void 
 
 function NxtCodexQuotaDashboard() {
   const queryClient = useQueryClient();
+  const [selectedProvider, setSelectedProvider] = useState<"nxtcodex" | "antigravity">("nxtcodex");
   const [autoRefreshIntervalMs, setAutoRefreshIntervalMs] = useState(60_000);
   const [now, setNow] = useState(() => Date.now());
   const [showRawHeaders, setShowRawHeaders] = useState(false);
@@ -461,23 +462,23 @@ function NxtCodexQuotaDashboard() {
   }, []);
 
   const quotaQuery = useQuery({
-    queryKey: ["nxtcodex-quota"],
-    queryFn: () => api<QuotaStatus>("/api/quota"),
+    queryKey: ["quota", selectedProvider],
+    queryFn: () => api<QuotaStatus>(`/api/quota?provider=${selectedProvider}`),
     refetchInterval: autoRefreshIntervalMs > 0 ? autoRefreshIntervalMs : false,
     retry: (failureCount) => failureCount < 3
   });
 
   const historyQuery = useQuery({
-    queryKey: ["nxtcodex-history"],
-    queryFn: () => api<{ provider: string; history: QuotaStatus[]; stats: any }>("/api/quota/history"),
+    queryKey: ["history", selectedProvider],
+    queryFn: () => api<{ provider: string; history: QuotaStatus[]; stats: any }>(`/api/quota/history?provider=${selectedProvider}`),
     refetchInterval: autoRefreshIntervalMs > 0 ? autoRefreshIntervalMs : false
   });
 
   const refreshMutation = useMutation({
-    mutationFn: () => api<QuotaStatus>("/api/quota/refresh", { method: "POST" }),
+    mutationFn: () => api<QuotaStatus>(`/api/quota/refresh?provider=${selectedProvider}`, { method: "POST" }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["nxtcodex-quota"] });
-      queryClient.invalidateQueries({ queryKey: ["nxtcodex-history"] });
+      queryClient.invalidateQueries({ queryKey: ["quota", selectedProvider] });
+      queryClient.invalidateQueries({ queryKey: ["history", selectedProvider] });
     }
   });
 
@@ -542,9 +543,23 @@ function NxtCodexQuotaDashboard() {
     <div className="nxtcodex-dashboard">
       <div className="page-heading">
         <div>
-          <span className="eyebrow">NXTCODEX.COM DASHBOARD</span>
-          <h1>API Key Quota Monitor</h1>
-          <p>Theo dõi hạn ngạch API key, tốc độ sử dụng và thời gian làm mới theo thời gian thực.</p>
+          <div className="provider-toggle-tabs" style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem" }}>
+            <button
+              className={`secondary-button ${selectedProvider === "nxtcodex" ? "active" : ""}`}
+              onClick={() => setSelectedProvider("nxtcodex")}
+            >
+              NXTCODEX Quota
+            </button>
+            <button
+              className={`secondary-button ${selectedProvider === "antigravity" ? "active" : ""}`}
+              onClick={() => setSelectedProvider("antigravity")}
+            >
+              Antigravity Quota
+            </button>
+          </div>
+          <span className="eyebrow">{selectedProvider.toUpperCase()} DASHBOARD</span>
+          <h1>{selectedProvider === "nxtcodex" ? "Codex & NXTCODEX Quota Monitor" : "Antigravity Quota Monitor"}</h1>
+          <p>Tự động quét credentials local (auth.json) & API, theo dõi hạn ngạch và thời gian làm mới theo thời gian thực.</p>
         </div>
         <div className="heading-actions">
           <div className="refresh-interval-select">
@@ -571,6 +586,16 @@ function NxtCodexQuotaDashboard() {
           </button>
         </div>
       </div>
+
+      {quota?.source === "auth_json" && (
+        <div className="quota-alert-banner threshold-20" style={{ backgroundColor: "rgba(56, 189, 248, 0.1)", borderColor: "rgba(56, 189, 248, 0.3)", color: "#38bdf8" }}>
+          <Sparkles size={18} />
+          <div>
+            <strong>Đã tự động phát hiện auth.json cục bộ!</strong>
+            <span>Credentials đã được tự động quét và trích xuất từ <code>{selectedProvider === "nxtcodex" ? "~/.codex/auth.json" : "~/.gemini/antigravity"}</code>.</span>
+          </div>
+        </div>
+      )}
 
       {alertThreshold && (
         <div className={`quota-alert-banner threshold-${alertThreshold.replace("%", "")}`}>
