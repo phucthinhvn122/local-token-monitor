@@ -438,7 +438,7 @@ export async function startServer(options: { port?: number; host?: string; openB
     ];
     const webRoot = candidates.find((candidate) => existsSync(path.join(candidate, "index.html")));
     if (webRoot) {
-      await app.register(fastifyStatic, { root: webRoot, wildcard: false });
+      await app.register(fastifyStatic, { root: webRoot, prefix: "/", wildcard: true });
       app.setNotFoundHandler((request, reply) => {
         if (request.raw.url?.startsWith("/api/")) return reply.code(404).send({ error: "Not found" });
         return reply.sendFile("index.html");

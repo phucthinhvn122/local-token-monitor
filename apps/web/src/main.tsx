@@ -894,4 +894,47 @@ function Dashboard() {
   </div>;
 }
 
-createRoot(document.getElementById("root")!).render(<React.StrictMode><QueryClientProvider client={queryClient}><Dashboard/></QueryClientProvider></React.StrictMode>);
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("Dashboard ErrorBoundary caught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: "2rem", color: "#ef4444", backgroundColor: "#0f172a", fontFamily: "sans-serif", minHeight: "100vh" }}>
+          <h2>Đã xảy ra lỗi trên giao diện Dashboard</h2>
+          <pre style={{ background: "#1e293b", padding: "1rem", borderRadius: "0.5rem", color: "#f8fafc", overflowX: "auto" }}>
+            {this.state.error?.toString()}
+          </pre>
+          <button
+            style={{ marginTop: "1rem", padding: "0.5rem 1rem", background: "#38bdf8", color: "#0f172a", border: "none", borderRadius: "0.25rem", cursor: "pointer", fontWeight: "bold" }}
+            onClick={() => window.location.reload()}
+          >
+            Tải lại trang
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <Dashboard />
+      </QueryClientProvider>
+    </ErrorBoundary>
+  </React.StrictMode>
+);
