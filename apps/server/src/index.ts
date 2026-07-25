@@ -434,13 +434,29 @@ export async function startServer(options: { port?: number; host?: string; openB
     const candidates = [
       path.resolve(import.meta.dirname, "../../web/dist"),
       path.resolve(import.meta.dirname, "../apps/web/dist"),
-      path.resolve(process.cwd(), "apps/web/dist")
+      path.resolve(process.cwd(), "apps/web/dist"),
+      path.resolve(process.cwd(), "dist")
     ];
     const webRoot = candidates.find((candidate) => existsSync(path.join(candidate, "index.html")));
     if (webRoot) {
-      await app.register(fastifyStatic, { root: webRoot, prefix: "/", wildcard: true });
+      await app.register(fastifyStatic, {
+        root: webRoot,
+        prefix: "/",
+        wildcard: false,
+        decorateReply: true,
+        serve: false
+      });
+
+      // Explicit route for asset files — must be registered BEFORE setNotFoundHandler
+      app.get("/assets/*", (request, reply) => {
+        const assetPath = (request.params as { "*": string })["*"];
+        return reply.sendFile(`assets/${assetPath}`);
+      });
+
       app.setNotFoundHandler((request, reply) => {
-        if (request.raw.url?.startsWith("/api/")) return reply.code(404).send({ error: "Not found" });
+        if (request.raw.url?.startsWith("/api/")) {
+          return reply.code(404).send({ error: "Not found" });
+        }
         return reply.sendFile("index.html");
       });
     }
