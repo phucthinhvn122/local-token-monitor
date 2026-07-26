@@ -541,6 +541,11 @@ export async function startServer(options: { port?: number; host?: string; openB
   });
   const previousNttCodexSnapshot = database.providerQuotaSnapshot("nttcodex");
   if (previousNttCodexSnapshot) void publicQuotaPublisher.publish(previousNttCodexSnapshot);
+  if (publicQuotaPublisher.status().configured) {
+    void nttcodexBrowser.connect(30).catch((error) => {
+      app.log.warn({ error: safeError(error) }, "NTTCodex automatic connection is waiting for the local browser session");
+    });
+  }
 
   return { app, url: `http://${host}:${port}`, database };
 }
