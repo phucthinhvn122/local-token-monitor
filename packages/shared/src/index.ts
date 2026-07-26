@@ -22,7 +22,22 @@ export type TransactionType = z.infer<typeof TransactionTypeSchema>;
 
 export const LoginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(1).max(200)
+  password: z.string().min(1).max(200),
+  /** Required on the second round when the account has TOTP enabled. */
+  totpCode: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "Enter the 6-digit code")
+    .optional()
+});
+
+export const TotpEnableSchema = z.object({
+  code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code")
+});
+
+export const TotpDisableSchema = z.object({
+  password: z.string().min(1).max(200),
+  code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code")
 });
 
 export const ChangePasswordSchema = z.object({
@@ -159,9 +174,13 @@ export const LogQuerySchema = z.object({
   model: z.string().trim().max(120).optional(),
   status: z.enum(["success", "error"]).optional(),
   sessionId: z.string().trim().max(200).optional(),
+  sort: z.enum(["createdAt", "totalTokens", "latencyMs"]).default("createdAt"),
+  order: z.enum(["asc", "desc"]).default("desc"),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50)
 });
+
+export type LogSortKey = z.infer<typeof LogQuerySchema>["sort"];
 
 export const StatsQuerySchema = z.object({
   range: z.enum(["24h", "7d", "30d", "90d"]).default("30d"),

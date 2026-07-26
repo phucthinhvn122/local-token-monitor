@@ -112,35 +112,40 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
+  /** One filter builder for the personal list and export, so they never drift. */
+  const myLogWhere = (
+    userId: string,
+    query: z.infer<typeof LogQuerySchema>
+  ): Prisma.UsageLogWhereInput => ({
+    apiKey: { userId },
+    ...(query.from || query.to
+      ? {
+          createdAt: {
+            ...(query.from ? { gte: new Date(query.from) } : {}),
+            ...(query.to ? { lte: new Date(query.to) } : {})
+          }
+        }
+      : {}),
+    ...(query.model ? { model: { contains: query.model, mode: "insensitive" as const } } : {}),
+    ...(query.sessionId ? { sessionId: query.sessionId } : {}),
+    ...(query.status === "error"
+      ? { OR: [{ statusCode: { gte: 400 } }, { statusCode: 0 }] }
+      : query.status === "success"
+        ? { statusCode: { gte: 200, lt: 400 } }
+        : {})
+  });
+
   /** Personal request log with the same filters the admin view offers. */
   app.get("/api/me/logs", async (request) => {
     const user = await app.requireAuth(request);
     const query = LogQuerySchema.parse(request.query);
-
-    const where: Prisma.UsageLogWhereInput = {
-      apiKey: { userId: user.id },
-      ...(query.from || query.to
-        ? {
-            createdAt: {
-              ...(query.from ? { gte: new Date(query.from) } : {}),
-              ...(query.to ? { lte: new Date(query.to) } : {})
-            }
-          }
-        : {}),
-      ...(query.model ? { model: { contains: query.model, mode: "insensitive" as const } } : {}),
-      ...(query.sessionId ? { sessionId: query.sessionId } : {}),
-      ...(query.status === "error"
-        ? { OR: [{ statusCode: { gte: 400 } }, { statusCode: 0 }] }
-        : query.status === "success"
-          ? { statusCode: { gte: 200, lt: 400 } }
-          : {})
-    };
+    const where = myLogWhere(user.id, query);
 
     const [total, logs] = await Promise.all([
       prisma.usageLog.count({ where }),
       prisma.usageLog.findMany({
         where,
-        orderBy: { createdAt: "desc" },
+        orderBy: { [query.sort]: query.order } as Prisma.UsageLogOrderByWithRelationInput,
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize
       })
@@ -201,11 +206,7 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
     const query = LogQuerySchema.parse({ ...(request.query as object), page: 1, pageSize: 1 });
 
     const logs = await prisma.usageLog.findMany({
-      where: {
-        apiKey: { userId: user.id },
-        ...(query.from ? { createdAt: { gte: new Date(query.from) } } : {}),
-        ...(query.to ? { createdAt: { lte: new Date(query.to) } } : {})
-      },
+      where: myLogWhere(user.id, query),
       orderBy: { createdAt: "desc" },
       take: 50_000
     });
@@ -230,6 +231,24 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /* --------------------------------------------------- Codex CLI setup */
+
+  /**
+   * The wire protocol the generated config declares must match what the pool
+   * can actually serve: the gateway only routes a request to providers speaking
+   * its protocol, so a `wire_api = "chat"` config against an all-responses pool
+   * would meet nothing but 503s. Chat wins whenever any provider speaks it
+   * (it is what Codex-compatible gateways most commonly implement).
+   */
+  async function detectWireApi(): Promise<"chat" | "responses"> {
+    const providers = await prisma.poolProvider.findMany({
+      where: { isActive: true },
+      select: { wireApi: true }
+    });
+    if (providers.length > 0 && providers.every((provider) => provider.wireApi === "RESPONSES")) {
+      return "responses";
+    }
+    return "chat";
+  }
 
   /**
    * Resolve which key the setup page should configure, preferring an explicit
@@ -258,7 +277,7 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
 
     const plaintext = recallPlaintext(key);
     const gatewayBaseUrl = settings.gatewayPublicUrl ?? env().PUBLIC_GATEWAY_URL;
-    const wireApi = "chat" as const;
+    const wireApi = await detectWireApi();
 
     // Without the plaintext, still render the exact shape of the files with an
     // unmistakable placeholder, so the page is useful for verification.
@@ -283,6 +302,7 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
       gatewayBaseUrl,
       model: query.model ?? settings.defaultModel,
       envKey: DEFAULT_ENV_KEY,
+      wireApi,
       bundle,
       steps: codexManualSteps(bundle, DEFAULT_ENV_KEY)
     };
@@ -311,7 +331,7 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
         gatewayBaseUrl: settings.gatewayPublicUrl ?? env().PUBLIC_GATEWAY_URL,
         apiKey: plaintext,
         model: query.model ?? settings.defaultModel,
-        wireApi: "chat",
+        wireApi: await detectWireApi(),
         envKey: DEFAULT_ENV_KEY
       },
       query.mode

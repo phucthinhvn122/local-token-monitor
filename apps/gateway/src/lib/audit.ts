@@ -14,10 +14,13 @@ export type AuditAction =
   | "provider.update"
   | "provider.delete"
   | "provider.test"
+  | "provider.circuit_open"
   | "settings.update"
   | "auth.login"
   | "auth.logout"
-  | "auth.password_change";
+  | "auth.password_change"
+  | "auth.totp_enable"
+  | "auth.totp_disable";
 
 /**
  * Audit writes must never break the operation they describe, so failures are

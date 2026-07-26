@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Plus, Users } from "lucide-react";
 import { api, qs } from "@/lib/api";
-import { useApi } from "@/lib/use-api";
+import { useApi, useDebounced } from "@/lib/use-api";
 import { formatRelative, formatTokens } from "@/lib/utils";
 import { PageHeader } from "@/components/shell";
 import {
@@ -215,8 +215,9 @@ export default function AdminUsersPage() {
   const [creating, setCreating] = React.useState(false);
   const [editing, setEditing] = React.useState<UserRow | null>(null);
 
+  const debouncedSearch = useDebounced(search);
   const { data, error, loading, reload } = useApi<UsersResponse>(
-    `/api/admin/users${qs({ search, status, page, pageSize: PAGE_SIZE })}`
+    `/api/admin/users${qs({ search: debouncedSearch, status, page, pageSize: PAGE_SIZE })}`
   );
 
   return (

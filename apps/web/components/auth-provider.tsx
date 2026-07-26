@@ -10,6 +10,7 @@ export interface SessionUser {
   name: string | null;
   role: "ADMIN" | "USER";
   status: "ACTIVE" | "SUSPENDED";
+  totpEnabled?: boolean;
 }
 
 interface AuthState {

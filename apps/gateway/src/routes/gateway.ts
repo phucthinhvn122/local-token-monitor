@@ -12,6 +12,7 @@ import { chargeTokens, hasQuota } from "../lib/quota.js";
 import { isProviderFailure, nextBreakerState, orderProviders, type RoutableProvider } from "../lib/router.js";
 import { loadPricing, loadSettings } from "../lib/settings.js";
 import { callUpstream } from "../lib/upstream.js";
+import { recordAudit } from "../lib/audit.js";
 import {
   EMPTY_USAGE,
   inspectSseEvent,
@@ -125,6 +126,19 @@ async function markProviderFailure(
       { provider: provider.name, errors: next.consecutiveErrors, until: next.circuitOpenUntil },
       "Circuit opened for pool provider"
     );
+    // Surface the event where admins actually look, not just in server logs.
+    await recordAudit({
+      adminId: null,
+      action: "provider.circuit_open",
+      targetType: "pool_provider",
+      targetId: provider.id,
+      metadata: {
+        name: provider.name,
+        consecutiveErrors: next.consecutiveErrors,
+        openUntil: next.circuitOpenUntil?.toISOString(),
+        lastError: message.slice(0, 200)
+      }
+    });
   }
 }
 
@@ -135,6 +149,7 @@ function toRoutable(provider: PoolProvider): RoutableProvider {
     priority: provider.priority,
     weight: provider.weight,
     models: provider.models,
+    wireApi: provider.wireApi,
     isActive: provider.isActive,
     consecutiveErrors: provider.consecutiveErrors,
     circuitOpenUntil: provider.circuitOpenUntil
@@ -291,11 +306,14 @@ async function forwardRequest(context: {
   const model = typeof body.model === "string" ? body.model : settings.defaultModel;
   const wantsStream = body.stream === true;
   const sessionId = sessionIdFrom(request, body);
+  const isChat = endpoint === "/v1/chat/completions";
 
   const providers = await prisma.poolProvider.findMany({ where: { isActive: true } });
   const ordered = orderProviders(providers.map(toRoutable), {
     strategy: settings.routingStrategy,
-    model
+    model,
+    // Only providers speaking this request's wire protocol are candidates.
+    wireApi: isChat ? "CHAT" : "RESPONSES"
   });
 
   if (ordered.length === 0) {
@@ -319,7 +337,7 @@ async function forwardRequest(context: {
     return sendOpenAiError(
       reply,
       503,
-      "No upstream provider is currently available",
+      `No upstream provider is currently available for the ${isChat ? "chat" : "responses"} wire API`,
       GATEWAY_ERROR_CODES.noProvider,
       "api_error"
     );
@@ -327,7 +345,6 @@ async function forwardRequest(context: {
 
   // Chat Completions only reports usage on a stream when explicitly asked. The
   // gateway always asks, then hides the extra chunk if the client did not.
-  const isChat = endpoint === "/v1/chat/completions";
   const prepared = wantsStream && isChat ? withUsageReporting(body) : { body, clientRequestedUsage: true };
   const providerById = new Map(providers.map((provider) => [provider.id, provider]));
 

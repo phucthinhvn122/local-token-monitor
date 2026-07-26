@@ -18,6 +18,7 @@ interface SetupResponse {
   gatewayBaseUrl: string;
   model: string;
   envKey: string;
+  wireApi: "chat" | "responses";
   bundle: {
     codexHome: string;
     configToml: string;
@@ -261,6 +262,10 @@ function ConnectCodexContent() {
               <div>
                 <p className="text-[var(--text-faint)]">Default model</p>
                 <code className="font-mono text-[12px]">{data.model}</code>
+              </div>
+              <div>
+                <p className="text-[var(--text-faint)]">Wire API</p>
+                <code className="font-mono text-[12px]">{data.wireApi}</code>
               </div>
               <div>
                 <p className="text-[var(--text-faint)]">Your key</p>

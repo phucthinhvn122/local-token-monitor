@@ -2,8 +2,8 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Zap } from "lucide-react";
-import { api } from "@/lib/api";
+import { ShieldCheck, Zap } from "lucide-react";
+import { api, ApiError } from "@/lib/api";
 import { useAuth, type SessionUser } from "@/components/auth-provider";
 import { Button, Card, Field, Input } from "@/components/ui";
 
@@ -12,6 +12,8 @@ export default function LoginPage() {
   const { refresh, user, loading } = useAuth();
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [totpCode, setTotpCode] = React.useState("");
+  const [totpRequired, setTotpRequired] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
 
@@ -25,11 +27,25 @@ export default function LoginPage() {
     setSubmitting(true);
     setError(null);
     try {
-      const data = await api.post<{ user: SessionUser }>("/api/auth/login", { email, password });
+      const data = await api.post<{ user: SessionUser }>("/api/auth/login", {
+        email,
+        password,
+        ...(totpRequired && totpCode ? { totpCode } : {})
+      });
       await refresh();
       router.replace(data.user.role === "ADMIN" ? "/admin" : "/dashboard");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Sign-in failed");
+      // The account has 2FA: swap in the code field instead of failing.
+      if (caught instanceof ApiError && caught.code === "totp_required") {
+        setTotpRequired(true);
+        setError(null);
+      } else if (caught instanceof ApiError && caught.code === "totp_invalid") {
+        setTotpRequired(true);
+        setTotpCode("");
+        setError(caught.message);
+      } else {
+        setError(caught instanceof Error ? caught.message : "Sign-in failed");
+      }
       setSubmitting(false);
     }
   };
@@ -70,6 +86,26 @@ export default function LoginPage() {
                 placeholder="••••••••••"
               />
             </Field>
+
+            {totpRequired && (
+              <Field label="Two-factor code" hint="The 6-digit code from your authenticator app.">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--color-accent-400)]" />
+                  <Input
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    pattern="\d{6}"
+                    maxLength={6}
+                    required
+                    autoFocus
+                    value={totpCode}
+                    onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, ""))}
+                    placeholder="123456"
+                    className="tabular tracking-[0.3em]"
+                  />
+                </div>
+              </Field>
+            )}
 
             {error && (
               <p

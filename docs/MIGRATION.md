@@ -139,8 +139,8 @@ None block use of the system. Each is a judgement call an operator may want to r
 1. **Horizontal scale.** If more than one gateway replica is ever needed, the
    in-process rate limiter, concurrency counter and round-robin cursor must move
    to Redis. Nothing else in the design blocks it.
-2. **Admin 2FA.** The column is reserved. Worth doing if the dashboard is
-   exposed to the public internet without SSO in front of it.
+2. **Admin 2FA.** *(Since resolved.)* TOTP enrolment now ships in Account
+   settings, with a rate-limited login challenge and a two-factor disable flow.
 3. **Key storage posture.** `STRICT_ONE_TIME_KEYS` defaults to `false` so
    auto-setup keeps working after a restart. Operators whose threat model
    includes database disclosure without key disclosure should flip it and rely

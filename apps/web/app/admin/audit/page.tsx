@@ -41,6 +41,7 @@ const PAGE_SIZE = 50;
 
 /** Destructive actions get a warm badge so they stand out when scanning. */
 function actionTone(action: string): "critical" | "warning" | "neutral" {
+  if (action === "provider.circuit_open") return "critical";
   if (action.endsWith(".delete") || action.endsWith(".revoke")) return "critical";
   if (action.endsWith(".create") || action.endsWith(".topup") || action.startsWith("settings")) return "warning";
   return "neutral";

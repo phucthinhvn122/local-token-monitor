@@ -230,7 +230,7 @@ export default function UserDashboard() {
                         {key.maskedKey}
                       </code>
                     </div>
-                    <div className="text-right">
+                    <div className="ml-auto shrink-0 text-right">
                       <p className="tabular text-sm font-medium">
                         {formatTokens(key.tokenRemaining)}{" "}
                         <span className="text-[var(--text-faint)]">left</span>

@@ -4,7 +4,7 @@ import * as React from "react";
 import { AlertTriangle, Check, Copy, KeyRound, Plus, RefreshCw } from "lucide-react";
 import type { ApiKeyView, TimeseriesPoint } from "@cgw/shared";
 import { api, qs } from "@/lib/api";
-import { useApi } from "@/lib/use-api";
+import { useApi, useDebounced } from "@/lib/use-api";
 import { formatDateTime, formatNumber, formatRelative, formatTokens } from "@/lib/utils";
 import { PageHeader } from "@/components/shell";
 import { ProgressBar, UsageAreaChart } from "@/components/charts";
@@ -251,7 +251,15 @@ function CreateKeyForm({ onCreated }: { onCreated: (plaintext: string) => void }
   );
 }
 
-function KeyDetailPanel({ apiKeyId, onChanged }: { apiKeyId: string; onChanged: () => void }) {
+function KeyDetailPanel({
+  apiKeyId,
+  onChanged,
+  close
+}: {
+  apiKeyId: string;
+  onChanged: () => void;
+  close: () => void;
+}) {
   const { data, error, loading, reload } = useApi<KeyDetail>(`/api/admin/keys/${apiKeyId}`);
   const toast = useToast();
   const [topUp, setTopUp] = React.useState("1000000");
@@ -439,9 +447,19 @@ function KeyDetailPanel({ apiKeyId, onChanged }: { apiKeyId: string; onChanged: 
           variant="danger"
           loading={busy}
           className="ml-auto"
-          onClick={() => {
+          onClick={async () => {
             if (!confirm("Delete this key and all of its usage history? This cannot be undone.")) return;
-            void act(() => api.delete(`/api/admin/keys/${apiKeyId}`), "Key deleted");
+            setBusy(true);
+            try {
+              await api.delete(`/api/admin/keys/${apiKeyId}`);
+              toast("Key deleted", "success");
+              onChanged();
+              // The row no longer exists; refetching it would just show a 404.
+              close();
+            } catch (caught) {
+              toast(caught instanceof Error ? caught.message : "Delete failed", "error");
+              setBusy(false);
+            }
           }}
         >
           Delete
@@ -461,7 +479,10 @@ export default function AdminKeysPage() {
   const [created, setCreated] = React.useState<string | null>(null);
   const [selected, setSelected] = React.useState<string | null>(null);
 
-  const { data, error, loading, reload } = useApi<KeysResponse>(`/api/admin/keys${qs({ search, status })}`);
+  const debouncedSearch = useDebounced(search);
+  const { data, error, loading, reload } = useApi<KeysResponse>(
+    `/api/admin/keys${qs({ search: debouncedSearch, status })}`
+  );
 
   const items = data?.items ?? [];
   const paged = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -628,7 +649,16 @@ export default function AdminKeysPage() {
         title="API key"
         description={selected ? formatDateTime(items.find((key) => key.id === selected)?.createdAt) : undefined}
       >
-        {selected && <KeyDetailPanel apiKeyId={selected} onChanged={reload} />}
+        {selected && (
+          <KeyDetailPanel
+            apiKeyId={selected}
+            onChanged={reload}
+            close={() => {
+              setSelected(null);
+              reload();
+            }}
+          />
+        )}
       </SidePanel>
     </>
   );

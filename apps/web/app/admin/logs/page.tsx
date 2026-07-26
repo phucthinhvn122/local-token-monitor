@@ -6,7 +6,15 @@ import { qs } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
 import { PageHeader } from "@/components/shell";
 import { Card, Select } from "@/components/ui";
-import { EMPTY_FILTERS, LogFilterBar, LogTable, toIsoEnd, toIsoStart, type LogFilters } from "@/components/log-table";
+import {
+  EMPTY_FILTERS,
+  LogFilterBar,
+  LogTable,
+  toIsoEnd,
+  toIsoStart,
+  type LogFilters,
+  type LogSortKey
+} from "@/components/log-table";
 
 interface LogsResponse {
   total: number;
@@ -20,6 +28,8 @@ const PAGE_SIZE = 50;
 export default function AdminLogsPage() {
   const [filters, setFilters] = React.useState<LogFilters>(EMPTY_FILTERS);
   const [page, setPage] = React.useState(1);
+  const [sort, setSort] = React.useState<LogSortKey>("createdAt");
+  const [order, setOrder] = React.useState<"asc" | "desc">("desc");
 
   const providers = useApi<{ items: ProviderView[] }>("/api/admin/providers");
 
@@ -32,10 +42,21 @@ export default function AdminLogsPage() {
     providerId: filters.providerId
   };
 
-  const logs = useApi<LogsResponse>(`/api/admin/logs${qs({ ...params, page, pageSize: PAGE_SIZE })}`);
+  const logs = useApi<LogsResponse>(
+    `/api/admin/logs${qs({ ...params, sort, order, page, pageSize: PAGE_SIZE })}`
+  );
 
   const updateFilters = (next: LogFilters) => {
     setFilters(next);
+    setPage(1);
+  };
+
+  const toggleSort = (key: LogSortKey) => {
+    if (sort === key) setOrder((current) => (current === "desc" ? "asc" : "desc"));
+    else {
+      setSort(key);
+      setOrder("desc");
+    }
     setPage(1);
   };
 
@@ -79,6 +100,9 @@ export default function AdminLogsPage() {
           onPage={setPage}
           onRetry={logs.reload}
           showOwner
+          sort={sort}
+          order={order}
+          onSort={toggleSort}
         />
       </Card>
     </>

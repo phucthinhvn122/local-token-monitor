@@ -1,4 +1,4 @@
-import type { RoutingStrategy } from "@cgw/shared";
+import type { RoutingStrategy, WireApi } from "@cgw/shared";
 
 export interface RoutableProvider {
   id: string;
@@ -6,6 +6,7 @@ export interface RoutableProvider {
   priority: number;
   weight: number;
   models: string[];
+  wireApi: WireApi;
   isActive: boolean;
   consecutiveErrors: number;
   circuitOpenUntil: Date | null;
@@ -14,6 +15,12 @@ export interface RoutableProvider {
 export interface SelectionContext {
   strategy: RoutingStrategy;
   model?: string | null;
+  /**
+   * Wire protocol of the incoming request. A provider only receives requests
+   * for the protocol it declares — a chat-only upstream would 404 a
+   * `/v1/responses` body, and that 404 would then be misread as client error.
+   */
+  wireApi?: WireApi;
   now?: Date;
   /** Providers already tried and failed during this request. */
   exclude?: ReadonlySet<string>;
@@ -39,6 +46,7 @@ export function eligibleProviders(
     (provider) =>
       provider.isActive &&
       !circuitIsOpen(provider, now) &&
+      (!context.wireApi || provider.wireApi === context.wireApi) &&
       servesModel(provider, context.model) &&
       !context.exclude?.has(provider.id)
   );

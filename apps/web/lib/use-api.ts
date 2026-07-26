@@ -52,3 +52,16 @@ export function useApi<T>(path: string | null, deps: React.DependencyList = []):
   const reload = React.useCallback(() => setNonce((value) => value + 1), []);
   return { data, error, loading, reload };
 }
+
+/**
+ * Trailing-edge debounce for search boxes, so a query fires per pause in
+ * typing rather than per keystroke.
+ */
+export function useDebounced<T>(value: T, delayMs = 300): T {
+  const [debounced, setDebounced] = React.useState(value);
+  React.useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
+}

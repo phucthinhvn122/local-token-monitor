@@ -744,7 +744,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       prisma.usageLog.count({ where }),
       prisma.usageLog.findMany({
         where,
-        orderBy: { createdAt: "desc" },
+        orderBy: { [query.sort]: query.order } as Prisma.UsageLogOrderByWithRelationInput,
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
         include: {

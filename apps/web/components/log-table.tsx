@@ -93,6 +93,8 @@ export function LogFilterBar({
   );
 }
 
+export type LogSortKey = "createdAt" | "totalTokens" | "latencyMs";
+
 export function LogTable({
   logs,
   loading,
@@ -102,7 +104,10 @@ export function LogTable({
   pageSize,
   onPage,
   onRetry,
-  showOwner = false
+  showOwner = false,
+  sort,
+  order,
+  onSort
 }: {
   logs: UsageLogView[];
   loading: boolean;
@@ -113,7 +118,14 @@ export function LogTable({
   onPage: (page: number) => void;
   onRetry: () => void;
   showOwner?: boolean;
+  sort?: LogSortKey;
+  order?: "asc" | "desc";
+  onSort?: (key: LogSortKey) => void;
 }) {
+  const sortProps = (key: LogSortKey) =>
+    onSort
+      ? { sortable: true, active: sort === key, direction: order, onSort: () => onSort(key) }
+      : {};
   if (error) return <ErrorState message={error} onRetry={onRetry} />;
 
   if (loading) {
@@ -140,14 +152,18 @@ export function LogTable({
       <Table>
         <thead>
           <tr>
-            <Th>Time</Th>
+            <Th {...sortProps("createdAt")}>Time</Th>
             {showOwner && <Th>User</Th>}
             <Th>Model</Th>
             {showOwner && <Th>Provider</Th>}
             <Th className="text-right">Input</Th>
             <Th className="text-right">Output</Th>
-            <Th className="text-right">Total</Th>
-            <Th className="text-right">Latency</Th>
+            <Th className="text-right" {...sortProps("totalTokens")}>
+              Total
+            </Th>
+            <Th className="text-right" {...sortProps("latencyMs")}>
+              Latency
+            </Th>
             <Th>Status</Th>
           </tr>
         </thead>

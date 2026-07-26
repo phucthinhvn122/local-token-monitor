@@ -32,6 +32,7 @@ apps/
     src/jobs.ts     Health checks, retention sweep, rate-limit state sweep
     src/lib/
       crypto        AES-256-GCM, scrypt passwords, HS256 session tokens
+      totp          RFC 6238 second factor (base32, HOTP, drift window)
       api-key       Generation, hashing, masking, bearer parsing
       usage         Wire-protocol usage normalisation, SSE parsing
       router        Selection strategies, eligibility, circuit breaker rules
@@ -63,8 +64,10 @@ For `POST /v1/chat/completions` and `POST /v1/responses`:
 2. **Rate limit** — per-key sliding 60s window, then a concurrency slot. Both fall
    back to system defaults when the key sets `0`.
 3. **Admit on quota** — "has any quota left", not "has enough for this one".
-4. **Order providers** — filter to active, circuit-closed, model-serving
-   providers, then order by the configured strategy.
+4. **Order providers** — filter to active, circuit-closed providers that serve
+   the requested model **and speak the request's wire protocol** (a chat-only
+   upstream would 404 a `/v1/responses` body), then order by the configured
+   strategy.
 5. **Forward** — strip the client's `Authorization`/`Cookie`, attach the decrypted
    pool credential, `JSON.stringify` the body. On 5xx/408/429/transport failure,
    record the failure and try the next provider. On a client 4xx, return it.
@@ -116,4 +119,3 @@ some providers bill components they do not itemise.
   cursor are per-process. Redis is the documented path to replicas.
 - **One-request overshoot** on quota, by design.
 - **No failover after first byte** on a stream.
-- **No 2FA**; `users.totp_secret` is reserved.

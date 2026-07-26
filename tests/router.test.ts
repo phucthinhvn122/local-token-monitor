@@ -16,6 +16,7 @@ const provider = (over: Partial<RoutableProvider> & { id: string }): RoutablePro
   priority: 100,
   weight: 1,
   models: [],
+  wireApi: "CHAT",
   isActive: true,
   consecutiveErrors: 0,
   circuitOpenUntil: null,
@@ -55,6 +56,33 @@ describe("eligibility", () => {
     const pool = [provider({ id: "a" }), provider({ id: "b" })];
     const result = eligibleProviders(pool, { strategy: "PRIORITY", exclude: new Set(["a"]) });
     expect(result.map((item) => item.id)).toEqual(["b"]);
+  });
+});
+
+describe("wire API filtering", () => {
+  const mixed = [
+    provider({ id: "chat-1", wireApi: "CHAT" }),
+    provider({ id: "resp-1", wireApi: "RESPONSES" }),
+    provider({ id: "chat-2", wireApi: "CHAT" })
+  ];
+
+  it("routes a chat request only to chat providers", () => {
+    const result = eligibleProviders(mixed, { strategy: "PRIORITY", wireApi: "CHAT" });
+    expect(result.map((item) => item.id).sort()).toEqual(["chat-1", "chat-2"]);
+  });
+
+  it("routes a responses request only to responses providers", () => {
+    const result = eligibleProviders(mixed, { strategy: "PRIORITY", wireApi: "RESPONSES" });
+    expect(result.map((item) => item.id)).toEqual(["resp-1"]);
+  });
+
+  it("returns an empty pool when nothing speaks the protocol", () => {
+    const chatOnly = [provider({ id: "a" }), provider({ id: "b" })];
+    expect(eligibleProviders(chatOnly, { strategy: "PRIORITY", wireApi: "RESPONSES" })).toEqual([]);
+  });
+
+  it("applies no filter when the context does not specify a wire API", () => {
+    expect(eligibleProviders(mixed, { strategy: "PRIORITY" })).toHaveLength(3);
   });
 });
 

@@ -6,7 +6,15 @@ import { qs } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
 import { PageHeader } from "@/components/shell";
 import { Card, CardHeader, EmptyState, Skeleton } from "@/components/ui";
-import { EMPTY_FILTERS, LogFilterBar, LogTable, toIsoEnd, toIsoStart, type LogFilters } from "@/components/log-table";
+import {
+  EMPTY_FILTERS,
+  LogFilterBar,
+  LogTable,
+  toIsoEnd,
+  toIsoStart,
+  type LogFilters,
+  type LogSortKey
+} from "@/components/log-table";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 
 interface LogsResponse {
@@ -33,6 +41,8 @@ const PAGE_SIZE = 50;
 export default function MyLogsPage() {
   const [filters, setFilters] = React.useState<LogFilters>(EMPTY_FILTERS);
   const [page, setPage] = React.useState(1);
+  const [sort, setSort] = React.useState<LogSortKey>("createdAt");
+  const [order, setOrder] = React.useState<"asc" | "desc">("desc");
 
   const query = qs({
     from: toIsoStart(filters.from),
@@ -40,6 +50,8 @@ export default function MyLogsPage() {
     model: filters.model,
     status: filters.status,
     sessionId: filters.sessionId,
+    sort,
+    order,
     page,
     pageSize: PAGE_SIZE
   });
@@ -50,6 +62,15 @@ export default function MyLogsPage() {
   // Any filter change invalidates the current page number.
   const updateFilters = (next: LogFilters) => {
     setFilters(next);
+    setPage(1);
+  };
+
+  const toggleSort = (key: LogSortKey) => {
+    if (sort === key) setOrder((current) => (current === "desc" ? "asc" : "desc"));
+    else {
+      setSort(key);
+      setOrder("desc");
+    }
     setPage(1);
   };
 
@@ -80,6 +101,9 @@ export default function MyLogsPage() {
           pageSize={PAGE_SIZE}
           onPage={setPage}
           onRetry={logs.reload}
+          sort={sort}
+          order={order}
+          onSort={toggleSort}
         />
       </Card>
 

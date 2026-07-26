@@ -294,6 +294,11 @@ closed, and serving the requested model — using the configured strategy:
 | `ROUND_ROBIN` | Even rotation across eligible providers |
 | `WEIGHTED` | Sampled proportionally to weight |
 
+A provider only receives requests for the wire protocol it declares — a
+`chat` provider serves `/v1/chat/completions`, a `responses` provider serves
+`/v1/responses` — and the generated Codex config picks its `wire_api` from
+what the active pool actually speaks.
+
 The gateway walks that list until one succeeds. Only **5xx, 408, 429 and
 transport failures** count as provider failures and trigger the next attempt —
 a 400 or 401 caused by the client is returned as-is, because retrying it
@@ -345,9 +350,21 @@ compromised.
 
 ### Two-factor authentication
 
-Not implemented. The schema reserves `users.totp_secret` for it. Until then,
-put the dashboard behind your own SSO or network controls if admin 2FA is a
-requirement.
+TOTP (RFC 6238 — the profile Google Authenticator, 1Password, Aegis etc.
+implement) is built in, dependency-free, and strongly recommended for
+administrator accounts:
+
+- Enrol under **Account → Two-factor authentication**: the server issues a
+  secret, and it only becomes active after a live code proves the
+  authenticator was set up correctly — a mis-scanned QR can never lock an
+  account.
+- Sign-in then requires the 6-digit code; the login form asks for it only
+  after the password is already correct, so the challenge does not reveal
+  which accounts have 2FA.
+- Disabling requires both the password and a current code, so a stolen
+  browser session is not enough to remove the second factor.
+
+Sign-in attempts are also rate-limited per client IP.
 
 ---
 
@@ -402,6 +419,7 @@ codes `invalid_api_key`, `api_key_revoked`, `api_key_expired`,
 | Method | Path |
 |---|---|
 | `POST` | `/api/auth/login`, `/api/auth/logout`, `/api/auth/password` |
+| `POST` | `/api/auth/totp/setup`, `/api/auth/totp/enable`, `/api/auth/totp/disable` |
 | `GET` | `/api/auth/me` |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/api/admin/users[/:id]` |
 | `GET`/`POST` | `/api/admin/keys[/:id]`, `/api/admin/keys/:id/topup`, `/api/admin/keys/:id/rotate` |
@@ -419,12 +437,13 @@ codes `invalid_api_key`, `api_key_revoked`, `api_key_expired`,
 npm test
 ```
 
-138 tests covering the paths where a bug costs money or leaks a secret:
+160 tests covering the paths where a bug costs money or leaks a secret:
 
 | Area | What is asserted |
 |---|---|
 | **Quota** (`tests/quota.test.ts`) | Deduction is order-independent, overshoot is bounded to one request, level thresholds, burn rate and runway projection, sliding-window rate limits, concurrency caps |
-| **Routing** (`tests/router.test.ts`) | All three strategies, eligibility and model allow-lists, breaker opens at the threshold, client errors do not trigger failover, full failover walks |
+| **Routing** (`tests/router.test.ts`) | All three strategies, eligibility, model allow-lists and wire-API filtering, breaker opens at the threshold, client errors do not trigger failover, full failover walks |
+| **2FA** (`tests/totp.test.ts`) | RFC 6238/4226 test vectors, base32 round-trips, drift window, malformed codes and secrets verify false |
 | **Usage** (`tests/usage.test.ts`) | Both wire protocols, SSE framing across chunk boundaries, usage-only chunk detection, `include_usage` injection, cost calculation with cached tokens |
 | **Codex config** (`tests/codex-config.test.ts`) | Both modes, TOML escaping, key never inlined in provider mode, backup and safety flags in the installers |
 | **Installer** (`tests/install-script.test.ts`) | The generated bash **is executed** against a temp `CODEX_HOME`: files land correctly, existing ones are backed up, it is idempotent, and a key full of shell metacharacters survives byte-for-byte |
@@ -443,7 +462,7 @@ revocation.
 ```text
 apps/
   gateway/        Fastify — REST API, OpenAI-compatible proxy, background jobs
-    src/lib/      crypto · api-key · usage · router · quota · rate-limit · upstream
+    src/lib/      crypto · totp · api-key · usage · router · quota · rate-limit · upstream
     src/routes/   auth · admin · me · gateway
   web/            Next.js 15 App Router — /admin/* and /dashboard/*
 packages/
@@ -463,7 +482,6 @@ docker/           Entrypoint, Caddyfile, backup volume
   round-robin cursor are in-process. Running replicas multiplies the effective
   ceilings and makes rotation per-replica. Moving those three stores to Redis is
   the documented path to horizontal scale; nothing else in the design blocks it.
-- **No 2FA yet** (see [Security](#security)).
 - **Failover cannot recover a stream that already started.**
 - **Estimated usage is approximate** — a byte-based heuristic, not a BPE
   tokenizer. It only applies when a provider reports no usage, and those rows
