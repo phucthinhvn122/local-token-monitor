@@ -97,6 +97,24 @@ there is no separate setup step.
 | Gateway (what Codex calls) | http://localhost:4000/v1 |
 | Health check | http://localhost:4000/api/health |
 
+### Try it with demo data
+
+To evaluate the dashboard before wiring up a real provider, load three members
+spread across the safe / warning / critical quota bands, three pool providers
+(one with an open circuit), and 30 days of usage history:
+
+```bash
+docker compose exec gateway npx tsx packages/db/src/seed-demo.ts
+# locally, outside Docker:  npm run db:seed:demo
+```
+
+It prints three sign-ins (password `password123`) and their API keys. It
+refuses to run if the database already has members; `-- --reset` removes it
+again. The demo providers point at placeholder URLs, so replace one with a real
+upstream before proxying anything.
+
+### First steps
+
 Sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`, **change that password
 immediately**, then:
 
@@ -132,9 +150,14 @@ cp .env.example .env          # point DATABASE_URL at your local Postgres
 npm run db:generate           # generate the Prisma client
 npm run db:migrate            # apply migrations
 npm run db:seed               # pricing rows + bootstrap admin
+npm run db:seed:demo          # optional: demo users, providers, usage history
 
 npm run dev                   # gateway on :4000, dashboard on :3000
 ```
+
+Open http://localhost:3000. The dashboard proxies `/api/*` to the gateway, so
+that is the only port you need in a browser — but Codex CLI talks to
+`http://localhost:4000/v1` directly.
 
 Other scripts:
 
@@ -144,6 +167,7 @@ Other scripts:
 | `npm run typecheck` | Typecheck the gateway, packages, and tests |
 | `npm run build` | Build the gateway and the dashboard |
 | `npm run db:migrate:dev` | Create a new migration from schema changes |
+| `npm run db:seed:demo -- --reset` | Remove the demo data |
 | `npm run db:studio` | Browse the database in Prisma Studio |
 
 ---

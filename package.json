@@ -31,6 +31,7 @@
     "db:migrate": "prisma migrate deploy --schema packages/db/prisma/schema.prisma",
     "db:migrate:dev": "prisma migrate dev --schema packages/db/prisma/schema.prisma",
     "db:seed": "tsx packages/db/src/seed.ts",
+    "db:seed:demo": "tsx packages/db/src/seed-demo.ts",
     "db:studio": "prisma studio --schema packages/db/prisma/schema.prisma",
     "format": "prettier --write ."
   },
