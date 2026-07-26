@@ -222,3 +222,20 @@
   background: #211411;
   color: #d48a77;
 }
+.browser-bridge-strip > div:nth-child(2) { flex: 1; min-width: 0; }
+.browser-bridge-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.browser-bridge-actions button { white-space: nowrap; }
+@media (max-width: 650px) {
+  .browser-bridge-strip { flex-wrap: wrap; }
+  .browser-bridge-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+  .browser-bridge-actions button { flex: 1; }
+}

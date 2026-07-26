@@ -81,10 +81,10 @@ function Skeleton({ className = "" }: { className?: string }) {
 function Sidebar({ page, setPage, mobileOpen, close }: { page: string; setPage: (page: string) => void; mobileOpen: boolean; close: () => void }) {
   const items = [
     ["overview", LayoutDashboard, "Overview"],
+    ["providers", PlugZap, "NTTCodex"],
     ["nxtcodex", KeyRound, "NXTCODEX Quota"],
     ["projects", FolderGit2, "Projects"],
     ["sessions", TerminalSquare, "Sessions"],
-    ["providers", PlugZap, "Third-party"],
     ["diagnostics", Gauge, "Diagnostics"]
   ] as const;
   return <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>
@@ -366,6 +366,33 @@ function ThirdPartyProviderCard({ row }: { row: Row }) {
       <div><span>Confidence</span><strong>{snapshot?.confidence ?? "none"}</strong></div>
     </div>
     <div className="provider-endpoint"><code>{isNttCodex ? "https://nttcodex.com/account/keys" : row.config.baseUrl || "Base URL unavailable"}</code></div>
+    {isNttCodex && <div className={`browser-bridge-strip bridge-${browserBridge.state}`}>
+      <ShieldCheck size={15}/>
+      <div>
+        <strong>{
+          browserBridge.state === "connected" ? "Đã kết nối trình duyệt" :
+          browserBridge.state === "waiting-login" ? "Đang chờ bạn đăng nhập" :
+          browserBridge.state === "starting" ? "Đang mở cửa sổ NTTCodex" :
+          browserBridge.state === "error" ? "Cần kết nối lại" :
+          "Chưa kết nối NTTCodex"
+        }</strong>
+        <span>{
+          browserBridge.state === "connected"
+            ? `Quota tự cập nhật mỗi ${browserBridge.refreshSeconds ?? 30} giây khi cửa sổ riêng còn mở.`
+            : "Bấm Kết nối, sau đó đăng nhập trong cửa sổ Chrome riêng. Không cần nhập cookie hoặc API key."
+        }</span>
+      </div>
+      <div className="browser-bridge-actions">
+        {browserBridge.state !== "connected" &&
+          <button className="primary-button" onClick={() => connectBrowser.mutate()} disabled={connectBrowser.isPending || browserBridge.state === "starting" || browserBridge.state === "waiting-login"}>
+            <KeyRound size={14}/>{connectBrowser.isPending || browserBridge.state === "starting" || browserBridge.state === "waiting-login" ? "Đang chờ đăng nhập…" : "Kết nối NTTCodex"}
+          </button>}
+        {browserBridge.state === "connected" && <>
+          <button className="primary-button" onClick={() => syncBrowser.mutate()} disabled={syncBrowser.isPending}><RefreshCw size={14}/>{syncBrowser.isPending ? "Đang đồng bộ…" : "Đồng bộ ngay"}</button>
+          <button className="secondary-button" onClick={() => disconnectBrowser.mutate()} disabled={disconnectBrowser.isPending}><X size={14}/>Ngắt kết nối</button>
+        </>}
+      </div>
+    </div>}
     <div className="quota-metrics">
       {metrics.length ? metrics.map((metric: Row, index: number) => <ProviderMetric key={`${metric.kind}-${index}`} metric={metric}/>) :
         <div className="provider-unavailable"><Gauge size={20}/><div><strong>Remaining quota unavailable</strong><span>{snapshot?.error ?? "No official quota or balance endpoint has been verified."}</span></div></div>}
@@ -380,36 +407,11 @@ function ThirdPartyProviderCard({ row }: { row: Row }) {
     </div>
     {snapshot && <div className="provider-freshness">Last checked {ago(snapshot.fetchedAt)} · {snapshot.partial ? "partial snapshot" : "complete snapshot"}</div>}
     {discover.data && <div className="discovery-result">Level {discover.data.executedLevel} · no network request sent · {discover.data.capabilities?.quotaEndpointVerified ? "quota endpoint verified" : "quota endpoint not verified"}</div>}
-    {isNttCodex && <div className={`browser-bridge-strip bridge-${browserBridge.state}`}>
-      <ShieldCheck size={15}/>
-      <div>
-        <strong>{
-          browserBridge.state === "connected" ? "Browser connected" :
-          browserBridge.state === "waiting-login" ? "Waiting for you to sign in" :
-          browserBridge.state === "starting" ? "Opening a secure browser window" :
-          browserBridge.state === "error" ? "Browser connection needs attention" :
-          "Browser not connected"
-        }</strong>
-        <span>{
-          browserBridge.state === "connected"
-            ? `Quota refreshes every ${browserBridge.refreshSeconds ?? 30}s while the dedicated window stays open.`
-            : "Sign in inside the dedicated NTTCodex window. The monitor reads quota JSON only; it never receives your password or cookie value."
-        }</span>
-      </div>
-    </div>}
     {(refresh.error || save.error || connectBrowser.error || syncBrowser.error || disconnectBrowser.error || browserBridge.lastError) &&
       <div className="provider-api-error">{(refresh.error ?? save.error ?? connectBrowser.error ?? syncBrowser.error ?? disconnectBrowser.error)?.message ?? browserBridge.lastError}</div>}
     <div className="provider-actions">
       <button className="secondary-button" onClick={() => discover.mutate()} disabled={discover.isPending}><Search size={14}/>{discover.isPending ? "Checking…" : "Discover L0"}</button>
       {!isNttCodex && <button className="secondary-button" onClick={() => refresh.mutate()} disabled={refresh.isPending}><RefreshCw size={14}/>{refresh.isPending ? "Refreshing…" : "Manual refresh"}</button>}
-      {isNttCodex && browserBridge.state !== "connected" &&
-        <button className="primary-button" onClick={() => connectBrowser.mutate()} disabled={connectBrowser.isPending || browserBridge.state === "starting" || browserBridge.state === "waiting-login"}>
-          <KeyRound size={14}/>{connectBrowser.isPending || browserBridge.state === "starting" || browserBridge.state === "waiting-login" ? "Waiting for login…" : "Connect browser"}
-        </button>}
-      {isNttCodex && browserBridge.state === "connected" && <>
-        <button className="secondary-button" onClick={() => syncBrowser.mutate()} disabled={syncBrowser.isPending}><RefreshCw size={14}/>{syncBrowser.isPending ? "Syncing…" : "Sync now"}</button>
-        <button className="secondary-button" onClick={() => disconnectBrowser.mutate()} disabled={disconnectBrowser.isPending}><X size={14}/>Disconnect</button>
-      </>}
       <button className="secondary-button" onClick={() => { if (!editing) setDraft(row.config); setEditing(!editing); }}><Settings size={14}/>{editing ? "Close" : "Configure"}</button>
     </div>
     {editing && <div className="provider-config">
@@ -433,12 +435,15 @@ function ThirdPartyProvidersPage() {
     staleTime: 2_000,
     refetchInterval: 2_000
   });
+  const rows = [...(data ?? [])].sort((left, right) =>
+    left.config.id === "nttcodex" ? -1 : right.config.id === "nttcodex" ? 1 : left.config.displayName.localeCompare(right.config.displayName)
+  );
   return <div className="third-party-page">
-    <div className="page-heading"><div><span className="eyebrow">VERIFIABLE QUOTA</span><h1>Third-party Providers</h1><p>Provider-reported limits only. Missing evidence stays unavailable.</p></div><button className="secondary-button" onClick={() => refetch()} disabled={isFetching}><RefreshCw size={15}/>{isFetching ? "Loading…" : "Reload local state"}</button></div>
+    <div className="page-heading"><div><span className="eyebrow">NTTCODEX QUOTA</span><h1>NTTCodex & Providers</h1><p>Kết nối NTTCodex ngay tại đây để theo dõi quota hôm nay và tháng này.</p></div><button className="secondary-button" onClick={() => refetch()} disabled={isFetching}><RefreshCw size={15}/>{isFetching ? "Loading…" : "Reload local state"}</button></div>
     <div className="third-party-principles">
       <ShieldCheck size={18}/><div><strong>Local and explicit</strong><span>NTTCodex browser sync starts only when you click Connect. Other providers keep network access off by default.</span></div>
     </div>
-    {isLoading ? <Skeleton className="page-skeleton"/> : <div className="third-party-grid">{(data ?? []).map((row) => <ThirdPartyProviderCard row={row} key={row.config.id}/>)}</div>}
+    {isLoading ? <Skeleton className="page-skeleton"/> : <div className="third-party-grid">{rows.map((row) => <ThirdPartyProviderCard row={row} key={row.config.id}/>)}</div>}
   </div>;
 }
 
