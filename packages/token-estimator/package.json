@@ -1,1 +1,9 @@
-{"name":"@ltm/token-estimator","version":"0.1.0","type":"module","exports":"./src/index.ts"}
+{
+  "name": "@cgw/token-estimator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

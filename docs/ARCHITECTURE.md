@@ -2,97 +2,120 @@
 
 ## Design goals
 
-Local Token Monitor is a loopback-only observability application. Collection failures must never stop the API, unsupported records must never be guessed, and content not needed for token usage must never reach persistent storage.
+1. **A request is never billed wrong.** Quota deduction is atomic, sourced from
+   the provider's own numbers where possible, and clearly labelled when it is not.
+2. **A pool credential never escapes.** Encrypted at rest, decrypted only for the
+   single outbound call, stripped from every response and log line.
+3. **A pool failure is not a user failure.** Failover and a circuit breaker keep
+   the gateway serving while individual upstreams misbehave.
+4. **Setup is two clicks.** The Codex configuration a user needs is generated,
+   not documented.
 
 ```text
-Provider paths + read-only processes
-              │
-      Codex / Claude adapters
-              │ known usage fields only
-        Collector Manager
-              │ normalize · redact · dedupe
-        SQLite repository
-              │ aggregate
-      Fastify REST + local SSE
-              │
-         React dashboard
+Codex CLI ──Bearer sk-cgw-…──▶ Fastify gateway ──▶ pool provider ──▶ upstream model
+                                    │
+                          authenticate · quota · rate limit
+                          route · forward · measure · charge
+                                    │
+                              PostgreSQL (Prisma)
+                                    ▲
+                          Next.js dashboard (session cookie)
 ```
 
-## Workspace tree
+## Workspace
 
 ```text
 apps/
-  server/                 Fastify API, SSE, CLI
-  web/                    React/Vite dashboard
+  gateway/          Fastify: /api/* dashboard API + /v1/* OpenAI-compatible proxy
+    src/env.ts      Zod-validated configuration; refuses to boot when invalid
+    src/server.ts   Plugin/route assembly, error handler, bootstrap admin
+    src/jobs.ts     Health checks, retention sweep, rate-limit state sweep
+    src/lib/
+      crypto        AES-256-GCM, scrypt passwords, HS256 session tokens
+      totp          RFC 6238 second factor (base32, HOTP, drift window)
+      api-key       Generation, hashing, masking, bearer parsing
+      usage         Wire-protocol usage normalisation, SSE parsing
+      router        Selection strategies, eligibility, circuit breaker rules
+      quota         Admission check, atomic charge, burn rate, projection
+      rate-limit    Sliding window + concurrency slots (in-process)
+      upstream      Outbound call and reachability probe
+      stats         date_trunc rollups and bucket filling
+      http          Error types, header allow/deny lists
+      audit         Redacted administrative logging
+      settings      Cached settings and pricing
+    src/routes/     auth · admin · me · gateway
+  web/              Next.js 15 App Router
+    app/admin/*     Overview, users, keys, providers, logs, audit, settings
+    app/dashboard/* Overview, connect, logs, account
+    components/     ui · charts · shell · auth-provider · log-table
 packages/
-  core/                   normalization, process scan, project resolver, redaction
-  database/               SQLite repository, migration, demo seed, pricing
-  collectors/             resilient JSONL parser, watcher, collector manager
-  provider-codex/         Codex installation/source/session adapter
-  provider-claude/        Claude Code installation/source/session adapter
-  provider-quota/         third-party research, header/body parsers, safe GET adapter
-  shared-types/           Zod schemas and stable interfaces
-  token-estimator/        optional local fallback and pricing calculation
-tests/
-  fixtures/               synthetic, secret-free provider records
+  db/               Prisma schema, migrations, seed
+  shared/           Zod contracts + Codex config generator
+  core/             Redaction, hashing, safe errors
+  token-estimator/  Pricing and estimation fallback
 ```
 
-## Database schema
+## Request pipeline
 
-- `providers`: installation/version status.
-- `projects`: resolved identity, optional Git metadata, hidden/demo state.
-- `sessions`: provider, project, model, process, timestamps, state.
-- `token_usage_events`: normalized token fields, accuracy/source, pricing, fingerprint, demo state.
-- `collector_sources`: hashed source identity, parser version, offset/error metadata.
-- `model_pricing`: editable local pricing patterns and effective dates.
-- `settings`: JSON values for local configuration.
-- `ignored_projects`: hidden projects.
-- `aliases`: user-defined display names.
-- `third_party_provider_configs`: public URL/protocol policy and API-key environment-variable name; never the key value.
-- `provider_quota_snapshots`: normalized, sanitized quota/header snapshots.
+For `POST /v1/chat/completions` and `POST /v1/responses`:
 
-Indexes cover event timestamp, provider, project, session, and session/project relationships. Foreign keys and WAL are enabled. Demo rows carry `is_demo=1` and API queries select exactly one data mode.
+1. **Authenticate** — SHA-256 the bearer token, single indexed lookup. Reject
+   unknown, revoked, expired, or suspended-owner keys with an OpenAI-shaped error.
+2. **Rate limit** — per-key sliding 60s window, then a concurrency slot. Both fall
+   back to system defaults when the key sets `0`.
+3. **Admit on quota** — "has any quota left", not "has enough for this one".
+4. **Order providers** — filter to active, circuit-closed providers that serve
+   the requested model **and speak the request's wire protocol** (a chat-only
+   upstream would 404 a `/v1/responses` body), then order by the configured
+   strategy.
+5. **Forward** — strip the client's `Authorization`/`Cookie`, attach the decrypted
+   pool credential, `JSON.stringify` the body. On 5xx/408/429/transport failure,
+   record the failure and try the next provider. On a client 4xx, return it.
+6. **Measure**
+   - *Buffered*: read `usage` from the body.
+   - *Streamed*: hijack the socket, parse SSE incrementally, capture the usage
+     chunk, and drop it from the client stream if the client never asked for it.
+   - *Neither*: estimate locally and mark `accuracy: "estimated"`.
+7. **Settle** — write `usage_logs`, then `token_used += total`, plus a `DEDUCT`
+   transaction. Detached from the response so a database hiccup cannot turn a
+   successful completion into an error.
 
-## Discovery
+## Concurrency and correctness
 
-### Codex
+- **Quota** uses `{ increment }`, never read-modify-write, so interleaved
+  requests cannot lose an update.
+- **Key creation** runs in a transaction with optional user creation, so a
+  duplicate email cannot leave an orphaned key.
+- **Settlement is idempotent per request** — one log row, one deduction.
+- **Session validity** is a database row, not just a signature, so revocation is
+  immediate.
 
-The adapter locates the executable with the operating system command resolver, obtains `--version`, matches native or Node-wrapped processes, and checks candidate roots under `CODEX_HOME`, `~/.codex`, and platform data directories. It does not depend on one fixed path.
+## Accuracy labelling
 
-### Claude Code
+| Label | Meaning |
+|---|---|
+| `exact` | The provider returned a `usage` object |
+| `estimated` | No provider usage; local byte heuristic, shown as `est` in the UI |
 
-The adapter uses the same binary/process strategy and checks `~/.claude/projects`, `~/.claude/sessions`, platform configuration/data roots, and user-supplied paths.
-
-Both adapters consider only recent `.json`/`.jsonl` candidates, ignore `.env`, cap discovery, and expose checked/found paths through redacted diagnostics.
-
-### Third-party quota
-
-FreeModel and NTTCodex use bundled Level 0 research. Generic OpenAI/Anthropic adapters parse only recognized rate-limit headers and response usage objects. Direct fetching requires an explicit HTTPS quota endpoint, environment-based credential, and network opt-in. There is no authenticated dashboard scraping, cookie reuse, or automatic inference request.
-
-## Accuracy and totals
-
-- **Exact**: provider supplied an authoritative total or direct usage metadata.
-- **Derived**: total is input + output from exact component fields.
-- **Estimated**: local tokenizer/heuristic fallback, disabled by default.
-- **Unavailable**: no defensible token value.
-
-If a provider supplies `total_tokens`, it wins. Cache and reasoning fields remain separate dimensions and are not added again. Cumulative Codex counters are converted to non-negative deltas per session before persistence.
-
-## Project resolution
-
-Candidate priority is process CWD, Git root, workspace root, session path metadata, parent CWD, then basename. Git commands are read-only. When OS permissions block process CWD and session metadata has no workspace, the session stays unresolved.
+`total_tokens` from the provider always wins over the component sum, because
+some providers bill components they do not itemise.
 
 ## Failure isolation
 
-Every parser is versioned. Malformed lines and unknown fields are ignored; sanitized errors are retained only in diagnostics. Fingerprint uniqueness makes rescans idempotent. Watcher/parser errors become activity events rather than unhandled server failures.
-
-## Risks and mitigations
-
-| Risk | Mitigation |
+| Failure | Behaviour |
 |---|---|
-| Provider format changes | Versioned parsers, schema validation, fixtures, graceful skip |
-| Cumulative usage double count | Delta tracking plus fingerprint uniqueness |
-| Secret in error/command | Pattern redaction and Fastify header redaction |
-| Excessive local scan | Recent-file window, source cap, explicit candidate roots |
-| Incorrect pricing | Separate editable table, effective date, “Estimated Cost” label |
-| Network exposure | Force `127.0.0.1` unless an explicit setting and environment opt-in |
+| One provider 5xx / timeout | Failover to the next; error counted |
+| N consecutive failures | Circuit opens for the cooldown; provider skipped |
+| Provider recovers | A passing health check closes the circuit early |
+| Every provider fails | `502` with the last error, logged with `provider_id = null` |
+| Client 4xx from upstream | Returned unchanged, no failover, provider not blamed |
+| Stream breaks mid-flight | SSE `error` event, usage so far still billed |
+| Client disconnects | Upstream read cancelled, usage so far still billed |
+| Database write fails at settle | Logged; the client keeps its successful response |
+
+## Known boundaries
+
+- **Single instance.** Rate limiting, concurrency capping and the round-robin
+  cursor are per-process. Redis is the documented path to replicas.
+- **One-request overshoot** on quota, by design.
+- **No failover after first byte** on a stream.

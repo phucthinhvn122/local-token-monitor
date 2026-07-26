@@ -1,0 +1,261 @@
+// Codex Gateway — data model
+//
+// Design notes:
+//  * Quota is a raw token number per API key. There are no plans/tiers.
+//  * `api_keys.token_used` is the single source of truth for consumption and is
+//    only ever mutated through atomic `increment` updates so concurrent gateway
+//    requests cannot lose a deduction.
+//  * Pool provider credentials are stored AES-256-GCM encrypted and are never
+//    serialized to any API response.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum TransactionType {
+  GRANT
+  TOPUP
+  DEDUCT
+  ADJUST
+}
+
+enum WireApi {
+  CHAT
+  RESPONSES
+}
+
+enum RoutingStrategy {
+  PRIORITY
+  ROUND_ROBIN
+  WEIGHTED
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique
+  name         String?
+  passwordHash String     @map("password_hash")
+  role         Role       @default(USER)
+  status       UserStatus @default(ACTIVE)
+  totpSecret   String?    @map("totp_secret")
+  lastLoginAt  DateTime?  @map("last_login_at")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  apiKeys      ApiKey[]          @relation("ApiKeyOwner")
+  createdKeys  ApiKey[]          @relation("ApiKeyCreator")
+  transactions TokenTransaction[]
+  auditLogs    AdminAuditLog[]
+  sessions     Session[]
+
+  @@index([status])
+  @@map("users")
+}
+
+/// Browser session for the dashboard. The cookie carries a signed token whose
+/// jti maps to this row, so an admin can revoke a session server-side.
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  tokenHash String   @unique @map("token_hash")
+  userAgent String?  @map("user_agent")
+  ip        String?
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model ApiKey {
+  id               String       @id @default(uuid()) @db.Uuid
+  userId           String       @map("user_id") @db.Uuid
+  name             String       @default("Default key")
+  /// SHA-256 of the full key. The key has 256 bits of entropy, so a fast hash
+  /// is appropriate here (unlike passwords, there is nothing to brute force).
+  keyHash          String       @unique @map("key_hash")
+  /// AES-256-GCM ciphertext of the same key.
+  ///
+  /// Required by the Codex auto-setup page, which has to emit a *working*
+  /// config.toml / auth.json on demand — a hash cannot do that. The one-time
+  /// display rule is therefore a UI policy, not a cryptographic guarantee.
+  /// Operators who want the stronger guarantee set STRICT_ONE_TIME_KEYS=true,
+  /// which leaves this column null and limits setup to the issuing session.
+  keyEncrypted     String?      @map("key_encrypted")
+  /// Display-only prefix, e.g. `sk-cgw-a1b2c3d4`. Rendered as `<prefix>****`.
+  keyPrefix        String       @map("key_prefix")
+  tokenQuota       BigInt       @default(0) @map("token_quota")
+  tokenUsed        BigInt       @default(0) @map("token_used")
+  status           ApiKeyStatus @default(ACTIVE)
+  /// Per-key limits. 0 = fall back to the global default.
+  rateLimitPerMin  Int          @default(0) @map("rate_limit_per_min")
+  maxConcurrent    Int          @default(0) @map("max_concurrent")
+  createdByAdminId String?      @map("created_by_admin_id") @db.Uuid
+  lastUsedAt       DateTime?    @map("last_used_at")
+  expiresAt        DateTime?    @map("expires_at")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  user           User               @relation("ApiKeyOwner", fields: [userId], references: [id], onDelete: Cascade)
+  createdByAdmin User?              @relation("ApiKeyCreator", fields: [createdByAdminId], references: [id], onDelete: SetNull)
+  transactions   TokenTransaction[]
+  usageLogs      UsageLog[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("api_keys")
+}
+
+model TokenTransaction {
+  id       String          @id @default(uuid()) @db.Uuid
+  apiKeyId String          @map("api_key_id") @db.Uuid
+  adminId  String?         @map("admin_id") @db.Uuid
+  /// Signed amount in tokens: positive grants, negative deductions.
+  amount   BigInt
+  type     TransactionType
+  note     String?
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  apiKey ApiKey @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  admin  User?  @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([apiKeyId, createdAt])
+  @@map("token_transactions")
+}
+
+model PoolProvider {
+  id              String   @id @default(uuid()) @db.Uuid
+  name            String   @unique
+  baseUrl         String   @map("base_url")
+  /// AES-256-GCM ciphertext, format `v1:<iv>:<tag>:<ciphertext>` (base64url).
+  apiKeyEncrypted String   @map("api_key_encrypted")
+  /// Last 4 characters of the plaintext key, for identification in the UI.
+  apiKeyLast4     String   @map("api_key_last4")
+  wireApi         WireApi  @default(CHAT) @map("wire_api")
+  /// Lower number = tried first under the PRIORITY strategy.
+  priority        Int      @default(100)
+  /// Relative share under the WEIGHTED strategy.
+  weight          Int      @default(1)
+  /// Optional allow-list. Empty = provider accepts any model.
+  models          String[] @default([])
+  isActive        Boolean  @default(true) @map("is_active")
+  timeoutMs       Int      @default(600000) @map("timeout_ms")
+
+  lastHealthCheck   DateTime? @map("last_health_check")
+  lastHealthOk      Boolean?  @map("last_health_ok")
+  lastHealthLatency Int?      @map("last_health_latency_ms")
+  lastErrorAt       DateTime? @map("last_error_at")
+  lastErrorMessage  String?   @map("last_error_message")
+  consecutiveErrors Int       @default(0) @map("consecutive_errors")
+  /// Circuit breaker: provider is skipped by the router until this instant.
+  circuitOpenUntil  DateTime? @map("circuit_open_until")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  usageLogs UsageLog[]
+
+  @@index([isActive, priority])
+  @@map("pool_providers")
+}
+
+model UsageLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  apiKeyId     String?  @map("api_key_id") @db.Uuid
+  providerId   String?  @map("provider_id") @db.Uuid
+  model        String?
+  /// Codex sends a stable conversation id; used to group a "working session".
+  sessionId    String?  @map("session_id")
+  endpoint     String
+  streamed     Boolean  @default(false)
+  inputTokens  Int      @default(0) @map("input_tokens")
+  outputTokens Int      @default(0) @map("output_tokens")
+  cachedTokens Int      @default(0) @map("cached_tokens")
+  totalTokens  Int      @default(0) @map("total_tokens")
+  /// `exact` = provider reported usage, `estimated` = local tokenizer fallback.
+  accuracy     String   @default("exact")
+  estimatedCost Decimal? @map("estimated_cost") @db.Decimal(12, 6)
+  latencyMs    Int      @default(0) @map("latency_ms")
+  statusCode   Int      @default(0) @map("status_code")
+  errorMessage String?  @map("error_message")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  apiKey   ApiKey?       @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  provider PoolProvider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+
+  @@index([apiKeyId, createdAt])
+  @@index([providerId, createdAt])
+  @@index([createdAt])
+  @@map("usage_logs")
+}
+
+model AdminAuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  adminId    String?  @map("admin_id") @db.Uuid
+  action     String
+  targetType String   @map("target_type")
+  targetId   String?  @map("target_id")
+  metadata   Json?
+  ip         String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  admin User? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([adminId, createdAt])
+  @@map("admin_audit_logs")
+}
+
+model ModelPricing {
+  id                 String   @id @default(uuid()) @db.Uuid
+  modelPattern       String   @unique @map("model_pattern")
+  inputPerMillion    Decimal  @map("input_per_million") @db.Decimal(12, 6)
+  outputPerMillion   Decimal  @map("output_per_million") @db.Decimal(12, 6)
+  cachedPerMillion   Decimal? @map("cached_per_million") @db.Decimal(12, 6)
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("model_pricing")
+}
+
+/// Singleton row (id = 1) holding runtime-editable system settings.
+model SystemSetting {
+  id                     Int             @id @default(1)
+  routingStrategy        RoutingStrategy @default(PRIORITY) @map("routing_strategy")
+  /// Consecutive failures before the circuit opens.
+  circuitThreshold       Int             @default(3) @map("circuit_threshold")
+  /// How long the circuit stays open, in seconds.
+  circuitCooldownSeconds Int             @default(60) @map("circuit_cooldown_seconds")
+  logRetentionDays       Int             @default(90) @map("log_retention_days")
+  defaultRateLimitPerMin Int             @default(120) @map("default_rate_limit_per_min")
+  defaultMaxConcurrent   Int             @default(8) @map("default_max_concurrent")
+  quotaWarnPercent       Int             @default(10) @map("quota_warn_percent")
+  gatewayPublicUrl       String?         @map("gateway_public_url")
+  defaultModel           String          @default("gpt-5-codex") @map("default_model")
+  updatedAt              DateTime        @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}

@@ -1,189 +1,503 @@
-# Local Token Monitor
+# Codex Gateway
 
-Local Token Monitor is a privacy-first dashboard for understanding token usage from OpenAI Codex CLI and Claude Code. It runs entirely on your machine at `http://localhost:3456`, stores usage metadata in SQLite, and never stores prompts, responses, source code, credentials, or API keys.
+A self-hosted, OpenAI-compatible gateway that puts **API keys and raw token quota**
+in front of a pool of upstream providers, so a team can share Codex CLI access
+with per-person metering.
 
-![Local Token Monitor dashboard](docs/dashboard.png)
+- **Admins** add upstream providers, issue keys, grant a flat number of tokens, and
+  watch usage and pool health.
+- **Users** sign in, see how much quota they have left, and get a working
+  `~/.codex` configuration in two clicks.
+- **Codex CLI** points at `https://your-gateway/v1` and works unchanged.
 
-> **MVP status:** the application is usable today with Demo Mode and versioned fixture formats. Provider session formats are not stable public APIs; unsupported records are skipped safely and shown in Diagnostics.
+Every request is authenticated, quota-checked, forwarded to a healthy provider,
+measured, and logged. Upstream credentials are encrypted at rest and never
+reach a client.
 
-## Features
+---
 
-- Detects installed and running Codex and Claude Code processes without changing them.
-- **NXTCODEX API Quota Monitor Dashboard**: Real-time quota, rate limits, progress bar, threshold notifications (20%, 10%, 5%), reset countdown clock (DD:HH:MM:SS), usage history charts, and consumption speed estimation for `nxtcodex.com`.
-- Discovers recent JSON/JSONL session sources through provider-specific candidate paths.
-- Separates input, output, cache read/write, reasoning, and total tokens.
-- Shows the latest Codex usage-limit percentage and window when Codex reports it.
-- Adds a **Third-party Providers** page for FreeModel, NTTCodex, and generic OpenAI/Anthropic-compatible services, with source, confidence, freshness, and strict `Unavailable` states.
-- NTTCodex can optionally connect through a dedicated visible browser window, read the signed-in `/account/keys` quota JSON without importing cookies, and refresh aggregate daily/monthly usage every 30 seconds.
-- A public, read-only link can show only monthly `used`, `remaining`, and `limit` values. The signed-in browser profile stays on the primary machine and is never synchronized.
-- Labels every value as **Exact**, **Derived**, **Estimated**, or **Unavailable**.
-- Links usage to projects when safe working-directory metadata is available.
-- Live updates over Server-Sent Events, with time/provider/project filters.
-- Project and session views, activity feed, diagnostics, privacy settings, retention, aliases, ignore controls, JSON/CSV export, and local reset.
-- Isolated 30-day Demo Mode with three projects and both providers.
-- Binds to `127.0.0.1` by default; no telemetry, analytics, cloud sync, or external font/image requests.
+## Contents
 
-## One-command start
-
-Requires Node.js 22.13 or newer.
-
-```bash
-npx local-token-monitor
-```
-
-No repository clone or global installation is required. The command downloads the package through npm when needed, starts the loopback-only server in the background, waits until it is healthy, prints Codex and Claude Code detection status, and opens [http://localhost:3456](http://localhost:3456). Live Data is the default; Demo Mode remains available in Settings.
-
-Until the npm package is published, the public GitHub build works with the same one-command flow:
-
-```bash
-npx --yes github:phucthinhvn122/local-token-monitor
-```
-
-Only the first launch opens a browser tab. Re-running the command reuses the single background server; use `local-token-monitor open` when you intentionally want another tab.
-
-For the GitHub build, stop or explicitly open it with:
-
-```bash
-npx --yes github:phucthinhvn122/local-token-monitor stop
-npx --yes github:phucthinhvn122/local-token-monitor open
-```
-
-To stop it later:
-
-```bash
-npx local-token-monitor stop
-```
-
-Other commands:
-
-```bash
-npx local-token-monitor status
-npx local-token-monitor open
-npx local-token-monitor doctor
-npx local-token-monitor export
-npx local-token-monitor reset --yes
-npx local-token-monitor provider discover freemodel
-npx local-token-monitor provider discover nttcodex
-npx local-token-monitor provider status
-npx local-token-monitor public-link status
-```
-
-## Public read-only quota link
-
-The optional public relay lets anyone with the link view only aggregate monthly
-token counts. The publisher sends exactly `limit`, `used`, and `observedAt`; the
-relay rejects extra fields such as provider URLs, account details, cookies, and
-API keys.
-
-Configure the primary machine once, then use the normal one-command start:
-
-```bash
-$env:LTM_PUBLIC_QUOTA_PUBLISH_TOKEN="<writer-secret>"
-npx --yes github:phucthinhvn122/local-token-monitor public-link configure --url="https://<public-site>" --limit=100000000
-npx --yes github:phucthinhvn122/local-token-monitor
-```
-
-The writer secret is stored only under the current operating-system user profile.
-It can update the public number but cannot access the signed-in provider session.
-Visitors only open the public link; they do not install the tool or sign in.
-
-### Contributor development
-
-```bash
-git clone <repository-url>
-cd local-token-monitor
-npm install
-npm run dev
-```
-
-Development uses the Vite UI on port 3456 and the loopback-only API on port 3457.
-
-## NXTCODEX API Quota Monitor
-
-Ứng dụng hỗ trợ theo dõi Quota API Key cho `nxtcodex.com` trên localhost:
-
-### 1. Cấu hình biến môi trường (`.env`)
-
-Tạo hoặc cập nhật file `.env` (xem `.env.example` làm mẫu):
-
-```env
-NXTCODEX_API_KEY=nxt_your_api_key_here
-NXTCODEX_BASE_URL=https://nxtcodex.com/v1
-NXTCODEX_QUOTA_ENDPOINT=
-```
-
-### 2. Các tính năng nổi bật:
-
-- **Trạng thái & Che Key**: Hiển thị API key đã che (`nxt_****7f2a`) và trạng thái (`active`, `limited`, `exhausted`, `expired`, `invalid`, `unknown`).
-- **Đồng hồ đếm ngược Reset**: Đếm ngược thời gian thực theo định dạng `DDd HHh MMm SSs`.
-- **Thanh tiến trình Phần trăm**: Màu sắc linh hoạt (>20% xanh, 10-20% vàng, <10% đỏ).
-- **Cảnh báo Ngưỡng 20%, 10%, 5%**: Banner thông báo tự động khi quota xuống các mức nguy hiểm.
-- **Lịch sử & Tốc độ tiêu thụ**: Lưu snapshots vào SQLite, tính tốc độ trung bình (số lượng/phút, số lượng/giờ) và dự đoán thời điểm quota sẽ hết.
-- **Nút "Kiểm tra ngay" & Auto-refresh**: Polling cấu hình được (10s, 30s, 60s mặc định, 5m, hoặc off) có backoff.
-- **API Nội bộ**:
-  - `GET /api/quota`
-  - `POST /api/quota/refresh`
-  - `GET /api/quota/history`
-  - `GET /api/health`
-  - `GET /api/settings`
-  - `PUT /api/settings`
+- [How it works](#how-it-works)
+- [Quick start](#quick-start)
+- [Local development](#local-development)
+- [Environment variables](#environment-variables)
+- [Connecting Codex CLI](#connecting-codex-cli)
+- [How quota is measured](#how-quota-is-measured)
+- [Routing and failover](#routing-and-failover)
+- [Security](#security)
+- [Operations](#operations)
+- [API reference](#api-reference)
+- [Testing](#testing)
+- [Project layout](#project-layout)
+- [Known limits](#known-limits)
 
 ---
 
 ## How it works
 
-1. Each provider adapter checks the CLI binary/version and a platform-specific list of candidate directories.
-2. The read-only process scanner matches executable name, path, and redacted command metadata.
-3. Versioned parsers extract only known usage fields from recent local session metadata. Unknown fields are ignored.
-4. The normalizer prevents cache/reasoning fields from being added twice when a provider supplies an authoritative total.
-5. SQLite deduplicates events with a SHA-256 fingerprint and aggregates the dashboard.
-6. The browser subscribes to local SSE updates. There are no outbound application requests.
+```text
+        Codex CLI                      Browser
+            │  Bearer sk-cgw-…             │  session cookie
+            ▼                              ▼
+     ┌──────────────────────┐        ┌─────────────┐
+     │  Fastify gateway     │◀───────│  Next.js    │  /api/* rewrite
+     │  /v1/*  +  /api/*    │        │  dashboard  │
+     └──────────┬───────────┘        └─────────────┘
+                │
+   authenticate key → check quota → rate limit → pick provider
+                │
+                ▼
+     ┌──────────────────────┐
+     │  Pool providers      │  round-robin / priority / weighted
+     │  (OpenAI-compatible) │  + circuit breaker + failover
+     └──────────┬───────────┘
+                │  usage from the response (or a local estimate)
+                ▼
+     ┌──────────────────────┐
+     │  PostgreSQL          │  atomic quota deduction + usage log
+     └──────────────────────┘
+```
 
-See [Architecture](docs/ARCHITECTURE.md) for module boundaries and the collection pipeline. Third-party quota support is documented in [Provider research](docs/THIRD_PARTY_PROVIDER_RESEARCH.md) and [Provider configuration](docs/THIRD_PARTY_PROVIDERS.md).
+The gateway speaks both wire protocols Codex may use — `/v1/chat/completions`
+and `/v1/responses` — and streams responses through untouched.
 
-## Privacy
+---
 
-The app reads only candidate session/log formats required for usage extraction. It parses records in memory, keeps only usage metadata, and never persists message content. `.env` files are excluded from discovery. Command lines and diagnostics are redacted. Privacy Mode hides project paths, Git remotes, OS usernames, and full session identifiers.
+## Quick start
 
-Read [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) before enabling custom paths or non-loopback access.
+Requires Docker with Compose v2.
 
-## Supported data sources
+```bash
+git clone https://github.com/phucthinhvn122/local-token-monitor.git
+cd local-token-monitor
+cp .env.example .env
+```
 
-| Provider | Source | Parser | Status |
+Generate the two required secrets and put them in `.env`:
+
+```bash
+echo "ENCRYPTION_KEY=$(openssl rand -hex 32)"
+echo "SESSION_SECRET=$(openssl rand -hex 32)"
+```
+
+Then set `POSTGRES_PASSWORD`, `DATABASE_URL`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`,
+and `PUBLIC_GATEWAY_URL` (the address your users' Codex CLI will call), and start it:
+
+```bash
+docker compose up -d --build
+```
+
+The gateway container applies migrations and seeds reference data on start, so
+there is no separate setup step.
+
+| Service | URL |
+|---|---|
+| Dashboard | http://localhost:3000 |
+| Gateway (what Codex calls) | http://localhost:4000/v1 |
+| Health check | http://localhost:4000/api/health |
+
+### Try it with demo data
+
+To evaluate the dashboard before wiring up a real provider, load three members
+spread across the safe / warning / critical quota bands, three pool providers
+(one with an open circuit), and 30 days of usage history:
+
+```bash
+docker compose exec gateway npx tsx packages/db/src/seed-demo.ts
+# locally, outside Docker:  npm run db:seed:demo
+```
+
+It prints three sign-ins (password `password123`) and their API keys. It
+refuses to run if the database already has members; `-- --reset` removes it
+again. The demo providers point at placeholder URLs, so replace one with a real
+upstream before proxying anything.
+
+### First steps
+
+Sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`, **change that password
+immediately**, then:
+
+1. **Pool providers → Add provider** — the upstream base URL and its API key.
+   Use **Test connection** before saving.
+2. **API keys → New API key** — pick or create a user, enter a token amount
+   (e.g. `2000000`), and copy the key that appears. It is shown once.
+3. Send the user to **Connect Codex CLI** on their dashboard.
+
+### Production TLS
+
+Codex holds long streaming connections, so the reverse proxy must not buffer or
+time them out. A ready Caddy config is included:
+
+```bash
+# edit docker/Caddyfile with your two hostnames first
+docker compose --profile tls up -d
+```
+
+Then set `PUBLIC_GATEWAY_URL=https://gateway.example.com`,
+`WEB_ORIGIN=https://dashboard.example.com`, and `COOKIE_SECURE=true`.
+
+---
+
+## Local development
+
+Requires Node.js 22.13+ and a reachable PostgreSQL 14+.
+
+```bash
+npm install
+cp .env.example .env          # point DATABASE_URL at your local Postgres
+
+npm run db:generate           # generate the Prisma client
+npm run db:migrate            # apply migrations
+npm run db:seed               # pricing rows + bootstrap admin
+npm run db:seed:demo          # optional: demo users, providers, usage history
+
+npm run dev                   # gateway on :4000, dashboard on :3000
+```
+
+Open http://localhost:3000. The dashboard proxies `/api/*` to the gateway, so
+that is the only port you need in a browser — but Codex CLI talks to
+`http://localhost:4000/v1` directly.
+
+Other scripts:
+
+| Command | What it does |
+|---|---|
+| `npm test` | Run the whole test suite |
+| `npm run typecheck` | Typecheck the gateway, packages, and tests |
+| `npm run build` | Build the gateway and the dashboard |
+| `npm run db:migrate:dev` | Create a new migration from schema changes |
+| `npm run db:seed:demo -- --reset` | Remove the demo data |
+| `npm run db:studio` | Browse the database in Prisma Studio |
+
+---
+
+## Environment variables
+
+| Variable | Required | Default | Notes |
 |---|---|---|---|
-| Codex | JSONL `token_count` / usage envelopes | `codex-usage-v1` | Defensive, fixture-tested |
-| Claude Code | Assistant message `usage` metadata | `claude-message-usage-v1` | Defensive, fixture-tested |
-| Both | Read-only process metadata | matcher v1 | Windows/macOS/Linux |
-| Both | Local fallback estimator | UTF-8 byte heuristic | Disabled by default, always Estimated |
-| FreeModel / NTTCodex | Public capability research | Level 0, no authentication | Verified domain; remaining quota unavailable without an official endpoint |
-| Compatible APIs | Response rate-limit headers and usage bodies | Defensive JSON/SSE parser | User-configured, network off by default |
+| `DATABASE_URL` | **yes** | — | PostgreSQL connection string |
+| `ENCRYPTION_KEY` | **yes** | — | 32 bytes as 64 hex chars. Encrypts provider credentials and user keys |
+| `SESSION_SECRET` | **yes** | — | ≥32 chars. Signs dashboard session cookies |
+| `PUBLIC_GATEWAY_URL` | no | `http://localhost:4000` | Baked into generated Codex configs — must be reachable by users |
+| `WEB_ORIGIN` | no | `http://localhost:3000` | Comma-separated CORS allow-list for the dashboard |
+| `PORT` / `HOST` | no | `4000` / `0.0.0.0` | Gateway bind address |
+| `SESSION_TTL_HOURS` | no | `168` | Dashboard session lifetime |
+| `COOKIE_SECURE` | no | `auto` | `auto` sets Secure when `PUBLIC_GATEWAY_URL` is https |
+| `STRICT_ONE_TIME_KEYS` | no | `false` | Store user keys as a hash only — see [Security](#security) |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | no | — | Bootstrap admin, created only when no admin exists |
+| `LOG_LEVEL` | no | `info` | `fatal`…`trace` |
+| `ENABLE_BACKGROUND_JOBS` | no | `true` | Health checks and the retention sweep |
+| `HEALTH_CHECK_INTERVAL_MS` | no | `300000` | Pool health probe cadence |
+| `RETENTION_SWEEP_INTERVAL_MS` | no | `21600000` | Log cleanup cadence |
+| `GATEWAY_INTERNAL_URL` | no | `http://localhost:4000` | How the Next.js server reaches the gateway |
 
-Exact support depends on provider versions and fields actually present. No token count is invented when metadata is absent.
+Runtime behaviour that admins change day to day — routing strategy, circuit
+breaker thresholds, default rate limits, retention days, quota warning
+percentage — lives in **Admin → Settings**, not in the environment.
 
-## Current limitations
+---
 
-- Process CWD is restricted on some operating systems; a running process may remain an unresolved project until session metadata supplies a workspace path.
-- WSL sources are not mounted or scanned automatically. Add an explicit readable custom path when appropriate.
-- Codex/Claude session formats can change without notice. Unknown formats are skipped rather than guessed.
-- Default pricing is a local, editable estimate with an effective date; the app never calls a pricing API automatically.
-- FreeModel does not currently expose a verified public quota/balance endpoint in the researched materials. NTTCodex account quota requires its optional local browser connection; without that explicit connection it remains unavailable.
-- Collector setting changes and port changes currently take effect after restart.
+## Connecting Codex CLI
 
-## Adding a provider adapter
+Codex reads its configuration from `CODEX_HOME` (default `~/.codex`). The
+**Connect Codex CLI** page generates it for the signed-in user's own key, in
+either of two shapes.
 
-Implement the stable `ProviderAdapter` interface in a new `packages/provider-*` workspace. Keep discovery paths versioned, validate only known usage fields, redact parser errors, add synthetic fixtures, and never persist raw messages. Register the adapter with `CollectorManager`.
+### Dedicated provider (default)
 
-## Development
+Adds a provider block and keeps the key in an environment variable, so nothing
+secret is written into the TOML file:
+
+```toml
+# ~/.codex/config.toml
+model = "gpt-5-codex"
+model_provider = "codex_gateway"
+
+[model_providers.codex_gateway]
+name = "Codex Gateway"
+base_url = "https://gateway.example.com/v1"
+env_key = "CODEX_GATEWAY_API_KEY"
+wire_api = "chat"
+```
+
+The generated installer also appends the `export` line to the user's shell
+profile, so "one button" still means one button.
+
+### Override the built-in provider
+
+Repoints the built-in `openai` provider and writes the key to `auth.json`, the
+same shape `codex login --with-api-key` produces:
+
+```toml
+# ~/.codex/config.toml
+model = "gpt-5-codex"
+model_provider = "openai"
+openai_base_url = "https://gateway.example.com/v1"
+```
+
+```json
+// ~/.codex/auth.json
+{ "OPENAI_API_KEY": "sk-cgw-…" }
+```
+
+Either way the page offers a **zip download** (`config.toml`, `auth.json` when
+applicable, `install.sh`, `install.ps1`) and a **copyable one-line installer**
+for bash or PowerShell. Both scripts create `CODEX_HOME` if needed and back up
+any existing file to `<name>.bak.<timestamp>` before writing.
+
+> **Two things worth knowing.** Provider and credential keys
+> (`model_provider`, `model_providers`, `openai_base_url`) only take effect in
+> the **user-level** config — Codex ignores them in a project-level config and
+> warns. And these field names have changed between Codex releases: the
+> generator is a single pure module (`packages/shared/src/codex-config.ts`)
+> with full test coverage, so adapting to a rename is a one-line change.
+
+---
+
+## How quota is measured
+
+Quota is a flat token number per key. There are no plans or tiers.
+
+1. **Before forwarding** the gateway checks the key is active, unexpired, owned
+   by an active user, within its rate limit, and has *some* quota left.
+2. **After the response** it reads the provider's `usage` object — `prompt_tokens`
+   /`completion_tokens` (Chat Completions) or `input_tokens`/`output_tokens`
+   (Responses API) — and charges `total_tokens`.
+3. **On a stream** the gateway injects `stream_options.include_usage` so the
+   provider emits a final usage chunk, captures it, and — when the client did
+   not ask for it — filters that chunk back out so the client sees exactly the
+   stream it expected.
+4. **If the provider reports nothing**, a local byte-based estimate is used and
+   the row is marked `accuracy: "estimated"`. The UI labels those with `est`;
+   they are never presented as exact.
+
+Deduction is a relative `UPDATE … SET token_used = token_used + n`, so
+concurrent requests cannot lose an update. Every change is mirrored into
+`token_transactions`, making any balance reconstructable.
+
+**A key can overshoot its grant by at most one request.** The cost of a request
+is unknowable until the response arrives, so the gate is "has quota left", not
+"has enough for this one". This is the standard pay-as-you-go trade-off and it
+is visible in the dashboard as `used > granted`.
+
+---
+
+## Routing and failover
+
+Each request builds an ordered list of eligible providers — active, circuit
+closed, and serving the requested model — using the configured strategy:
+
+| Strategy | Behaviour |
+|---|---|
+| `PRIORITY` | Lowest priority number first; healthier provider wins a tie |
+| `ROUND_ROBIN` | Even rotation across eligible providers |
+| `WEIGHTED` | Sampled proportionally to weight |
+
+A provider only receives requests for the wire protocol it declares — a
+`chat` provider serves `/v1/chat/completions`, a `responses` provider serves
+`/v1/responses` — and the generated Codex config picks its `wire_api` from
+what the active pool actually speaks.
+
+The gateway walks that list until one succeeds. Only **5xx, 408, 429 and
+transport failures** count as provider failures and trigger the next attempt —
+a 400 or 401 caused by the client is returned as-is, because retrying it
+elsewhere would just repeat the rejection.
+
+After `circuitThreshold` consecutive failures a provider's circuit opens for
+`circuitCooldownSeconds` and it is skipped entirely. A successful health check
+closes it early, so a recovered provider rejoins without waiting out the cooldown.
+
+**Failover applies before the first byte only.** Once a stream has started
+writing to the client, switching providers would corrupt it; the gateway emits
+an SSE `error` event instead and still bills what was generated.
+
+---
+
+## Security
+
+- **Upstream provider keys** are encrypted with AES-256-GCM (`v1:iv:tag:ciphertext`,
+  fresh IV per record) and are never included in any API response — the UI only
+  ever shows the last four characters.
+- **User API keys** are 256 bits of CSPRNG output, looked up by SHA-256 digest.
+  A fast hash is correct here: unlike a password there is nothing to guess, and
+  the lookup is on the hot path of every proxied request.
+- **Passwords** use scrypt (N=16384) with a per-password salt.
+- **Sessions** are HMAC-SHA256 signed cookies (`httpOnly`, `SameSite=Lax`) backed
+  by a `sessions` row, so revocation takes effect immediately. Changing a
+  password or suspending a user deletes every session they have.
+- **Rate limiting and concurrency caps** are enforced per key.
+- **Header hygiene**: the client's `Authorization` and `Cookie` never reach an
+  upstream, and an upstream's `Set-Cookie` and CORS headers never reach a client.
+- **Error redaction**: every message that can reach a log, an audit row, or an
+  API response passes through a secret-stripping filter first.
+- **Audit trail** records every administrative action with actor, target, IP and
+  a redacted payload.
+
+### The one-time key trade-off
+
+The Codex auto-setup page must emit a *working* config file, and a hash cannot
+produce one. By default the gateway therefore also stores each user key
+**encrypted** so the page keeps working after a restart. The "shown once" rule
+is then a UI policy rather than a cryptographic guarantee — no read endpoint
+ever returns a plaintext key.
+
+Set `STRICT_ONE_TIME_KEYS=true` to store hashes only. Auto-setup then works
+only in the session that issued the key; afterwards an admin must use
+**Rotate** to mint a new secret. Choose based on whether your threat model
+includes database-at-rest disclosure where `ENCRYPTION_KEY` is *not* also
+compromised.
+
+### Two-factor authentication
+
+TOTP (RFC 6238 — the profile Google Authenticator, 1Password, Aegis etc.
+implement) is built in, dependency-free, and strongly recommended for
+administrator accounts:
+
+- Enrol under **Account → Two-factor authentication**: the server issues a
+  secret, and it only becomes active after a live code proves the
+  authenticator was set up correctly — a mis-scanned QR can never lock an
+  account.
+- Sign-in then requires the 6-digit code; the login form asks for it only
+  after the password is already correct, so the challenge does not reveal
+  which accounts have 2FA.
+- Disabling requires both the password and a current code, so a stolen
+  browser session is not enough to remove the second factor.
+
+Sign-in attempts are also rate-limited per client IP.
+
+---
+
+## Operations
+
+**Backups.** A nightly `pg_dump` profile is included, keeping the last 14
+archives in `docker/backup/`:
+
+```bash
+docker compose --profile backup up -d
+```
+
+Restore with:
+
+```bash
+gunzip -c docker/backup/codex-gateway-<stamp>.sql.gz \
+  | docker compose exec -T postgres psql -U codex -d codex_gateway
+```
+
+Back up `ENCRYPTION_KEY` separately and just as carefully — **a database dump
+without it cannot yield provider credentials or user keys.**
+
+**Retention.** Usage logs and audit entries older than `logRetentionDays`
+(default 90) are deleted by a periodic sweep. Quota balances and token
+transactions are never swept.
+
+**Health.** `GET /api/health` reports gateway and database status; both
+containers also declare Docker health checks.
+
+**Scaling out.** See [Known limits](#known-limits) — rate limiting, concurrency
+capping and the round-robin cursor are per-process today.
+
+---
+
+## API reference
+
+### Gateway (Bearer `sk-cgw-…`)
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/v1/chat/completions` | Chat Completions, streaming supported |
+| `POST` | `/v1/responses` | Responses API, streaming supported |
+| `GET` | `/v1/models` | Union of models the pool advertises |
+
+Errors use the OpenAI envelope `{ "error": { message, type, code } }` with
+codes `invalid_api_key`, `api_key_revoked`, `api_key_expired`,
+`user_suspended`, `insufficient_quota`, `rate_limit_exceeded`,
+`too_many_concurrent_requests`, `no_provider_available`, `upstream_error`.
+
+### Dashboard (session cookie)
+
+| Method | Path |
+|---|---|
+| `POST` | `/api/auth/login`, `/api/auth/logout`, `/api/auth/password` |
+| `POST` | `/api/auth/totp/setup`, `/api/auth/totp/enable`, `/api/auth/totp/disable` |
+| `GET` | `/api/auth/me` |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/api/admin/users[/:id]` |
+| `GET`/`POST` | `/api/admin/keys[/:id]`, `/api/admin/keys/:id/topup`, `/api/admin/keys/:id/rotate` |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/api/admin/providers[/:id]`, `/api/admin/providers/:id/test` |
+| `GET` | `/api/admin/overview`, `/api/admin/logs`, `/api/admin/logs/export`, `/api/admin/audit` |
+| `GET`/`PATCH` | `/api/admin/settings` |
+| `GET` | `/api/me/dashboard`, `/api/me/logs`, `/api/me/logs/export`, `/api/me/sessions` |
+| `GET` | `/api/me/codex-setup`, `/api/me/codex-setup/download` |
+
+---
+
+## Testing
 
 ```bash
 npm test
-npm run lint
-npm run build
-npm run db:migrate
 ```
 
-Please read [CONTRIBUTING.md](CONTRIBUTING.md). The roadmap is to expand verified provider fixtures, add safe WSL discovery, improve per-process CWD resolution, and publish signed cross-platform packages.
+160 tests covering the paths where a bug costs money or leaks a secret:
+
+| Area | What is asserted |
+|---|---|
+| **Quota** (`tests/quota.test.ts`) | Deduction is order-independent, overshoot is bounded to one request, level thresholds, burn rate and runway projection, sliding-window rate limits, concurrency caps |
+| **Routing** (`tests/router.test.ts`) | All three strategies, eligibility, model allow-lists and wire-API filtering, breaker opens at the threshold, client errors do not trigger failover, full failover walks |
+| **2FA** (`tests/totp.test.ts`) | RFC 6238/4226 test vectors, base32 round-trips, drift window, malformed codes and secrets verify false |
+| **Usage** (`tests/usage.test.ts`) | Both wire protocols, SSE framing across chunk boundaries, usage-only chunk detection, `include_usage` injection, cost calculation with cached tokens |
+| **Codex config** (`tests/codex-config.test.ts`) | Both modes, TOML escaping, key never inlined in provider mode, backup and safety flags in the installers |
+| **Installer** (`tests/install-script.test.ts`) | The generated bash **is executed** against a temp `CODEX_HOME`: files land correctly, existing ones are backed up, it is idempotent, and a key full of shell metacharacters survives byte-for-byte |
+| **Security** (`tests/security.test.ts`) | AES-256-GCM round-trip and tamper rejection, password hashing, session token forgery, header stripping in both directions, secret redaction, zip structure |
+
+The full stack was also verified end to end against a live PostgreSQL and two
+stub upstream providers: 50 checks covering sign-in, RBAC, provider CRUD, key
+issuance, streaming and non-streaming proxying, exact quota deduction,
+failover, breaker opening, quota exhaustion, top-up, config generation and
+revocation.
+
+---
+
+## Project layout
+
+```text
+apps/
+  gateway/        Fastify — REST API, OpenAI-compatible proxy, background jobs
+    src/lib/      crypto · totp · api-key · usage · router · quota · rate-limit · upstream
+    src/routes/   auth · admin · me · gateway
+  web/            Next.js 15 App Router — /admin/* and /dashboard/*
+packages/
+  db/             Prisma schema, migrations, seed
+  shared/         Zod contracts + the Codex config generator
+  core/           Secret redaction, hashing, safe errors
+  token-estimator/ Pricing and the estimation fallback
+tests/            Vitest suites
+docker/           Entrypoint, Caddyfile, backup volume
+```
+
+---
+
+## Known limits
+
+- **Single gateway instance.** Rate limiting, concurrency capping and the
+  round-robin cursor are in-process. Running replicas multiplies the effective
+  ceilings and makes rotation per-replica. Moving those three stores to Redis is
+  the documented path to horizontal scale; nothing else in the design blocks it.
+- **Failover cannot recover a stream that already started.**
+- **Estimated usage is approximate** — a byte-based heuristic, not a BPE
+  tokenizer. It only applies when a provider reports no usage, and those rows
+  are always labelled.
+
+---
+
+## Origins
+
+This project began as **Local Token Monitor**, a privacy-first local dashboard
+that *passively read* Codex and Claude Code session logs on one machine. It has
+been converted into a multi-user gateway that *actively meters* traffic it
+proxies. The analysis behind that conversion — what was kept, replaced, and
+deleted, and why — is in [`docs/MIGRATION.md`](docs/MIGRATION.md). The
+pre-conversion code remains in git history at commit `82cdb1d`.
 
 ## License
 
-[MIT](LICENSE) was chosen to keep reuse and contribution simple while preserving the standard warranty disclaimer.
+MIT — see [LICENSE](LICENSE).

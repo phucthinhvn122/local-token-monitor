@@ -1,0 +1,38 @@
+# Replace both hostnames with your own; Caddy provisions certificates
+# automatically once the DNS records point at this host.
+#
+# Two names are used on purpose: the dashboard and the OpenAI-compatible
+# gateway have different audiences (browsers vs Codex CLI) and different
+# timeout needs.
+
+gateway.example.com {
+	encode zstd gzip
+
+	# Codex streams for a long time; do not let the proxy cut a live response.
+	reverse_proxy gateway:4000 {
+		flush_interval -1
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+}
+
+dashboard.example.com {
+	encode zstd gzip
+	reverse_proxy web:3000
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}

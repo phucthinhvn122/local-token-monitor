@@ -1,2 +1,0 @@
-{"timestamp":"2026-01-01T00:00:00Z","session_id":"fixture-codex-1","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":200,"output_tokens":50,"cached_input_tokens":80,"reasoning_tokens":12,"total_tokens":250}}}}
-{"timestamp":"2026-01-01T00:01:00Z","session_id":"fixture-codex-1","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":260,"output_tokens":75,"cached_input_tokens":90,"reasoning_tokens":18,"total_tokens":335}}}}
