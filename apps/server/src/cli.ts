@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { mkdir, open as openFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open as openFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -86,6 +86,52 @@ async function reportRunning(url: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  if (command === "public-link") {
+    const action = positionalArgs[1] ?? "status";
+    const quotaModule = await import("@ltm/provider-quota");
+    if (action === "status") {
+      try {
+        const config = await quotaModule.readPublicQuotaRelayConfig(runtimeDir);
+        console.log(JSON.stringify(config
+          ? {
+              configured: true,
+              enabled: config.enabled,
+              endpoint: config.endpoint,
+              monthlyLimit: config.monthlyLimit,
+              publishToken: "[REDACTED]"
+            }
+          : { configured: false }, null, 2));
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : "Unable to read public link configuration.");
+        process.exitCode = 1;
+      }
+      return;
+    }
+    if (action !== "configure") {
+      console.error("Usage: local-token-monitor public-link [status|configure --url=<public-site> --limit=100000000]");
+      process.exitCode = 2;
+      return;
+    }
+    const endpoint = optionValue("url") ?? process.env.LTM_PUBLIC_QUOTA_RELAY_URL;
+    const publishToken = optionValue("token") ?? process.env.LTM_PUBLIC_QUOTA_PUBLISH_TOKEN;
+    const monthlyLimit = Number(optionValue("limit") ?? process.env.LTM_NTTCODEX_MONTHLY_LIMIT ?? 100_000_000);
+    const config = quotaModule.parsePublicQuotaRelayConfig({
+      enabled: true,
+      endpoint,
+      publishToken,
+      monthlyLimit
+    });
+    await mkdir(runtimeDir, { recursive: true });
+    const configPath = quotaModule.publicQuotaRelayConfigPath(runtimeDir);
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+    await chmod(configPath, 0o600).catch(() => undefined);
+    console.log("Public quota publishing is configured.");
+    console.log(`  Public API: ${config.endpoint}`);
+    console.log(`  Monthly limit: ${config.monthlyLimit.toLocaleString("en-US")} tokens`);
+    console.log("  Publish token: [stored locally, redacted]");
+    if (state()?.pid) console.log("  Restart Local Token Monitor once to apply this configuration.");
+    return;
+  }
   if (command === "provider") {
     const action = positionalArgs[1] ?? "status";
     const [{ MonitorDatabase }, quotaModule, sharedTypes] = await Promise.all([
@@ -290,7 +336,7 @@ async function main(): Promise<void> {
     console.log("Local data reset. Demo data was restored.");
     return;
   }
-  console.log("Usage: local-token-monitor [start|stop|status|open|doctor|export|reset|provider]");
+  console.log("Usage: local-token-monitor [start|stop|status|open|doctor|export|reset|provider|public-link]");
 }
 
 void main();

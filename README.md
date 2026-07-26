@@ -15,6 +15,7 @@ Local Token Monitor is a privacy-first dashboard for understanding token usage f
 - Shows the latest Codex usage-limit percentage and window when Codex reports it.
 - Adds a **Third-party Providers** page for FreeModel, NTTCodex, and generic OpenAI/Anthropic-compatible services, with source, confidence, freshness, and strict `Unavailable` states.
 - NTTCodex can optionally connect through a dedicated visible browser window, read the signed-in `/account/keys` quota JSON without importing cookies, and refresh aggregate daily/monthly usage every 30 seconds.
+- A public, read-only link can show only monthly `used`, `remaining`, and `limit` values. The signed-in browser profile stays on the primary machine and is never synchronized.
 - Labels every value as **Exact**, **Derived**, **Estimated**, or **Unavailable**.
 - Links usage to projects when safe working-directory metadata is available.
 - Live updates over Server-Sent Events, with time/provider/project filters.
@@ -64,7 +65,27 @@ npx local-token-monitor reset --yes
 npx local-token-monitor provider discover freemodel
 npx local-token-monitor provider discover nttcodex
 npx local-token-monitor provider status
+npx local-token-monitor public-link status
 ```
+
+## Public read-only quota link
+
+The optional public relay lets anyone with the link view only aggregate monthly
+token counts. The publisher sends exactly `limit`, `used`, and `observedAt`; the
+relay rejects extra fields such as provider URLs, account details, cookies, and
+API keys.
+
+Configure the primary machine once, then use the normal one-command start:
+
+```bash
+$env:LTM_PUBLIC_QUOTA_PUBLISH_TOKEN="<writer-secret>"
+npx --yes github:phucthinhvn122/local-token-monitor public-link configure --url="https://<public-site>" --limit=100000000
+npx --yes github:phucthinhvn122/local-token-monitor
+```
+
+The writer secret is stored only under the current operating-system user profile.
+It can update the public number but cannot access the signed-in provider session.
+Visitors only open the public link; they do not install the tool or sign in.
 
 ### Contributor development
 
@@ -89,8 +110,6 @@ Tạo hoặc cập nhật file `.env` (xem `.env.example` làm mẫu):
 NXTCODEX_API_KEY=nxt_your_api_key_here
 NXTCODEX_BASE_URL=https://nxtcodex.com/v1
 NXTCODEX_QUOTA_ENDPOINT=
-NXTCODEX_ACCESS_TOKEN=
-NXTCODEX_SESSION_COOKIE=
 ```
 
 ### 2. Các tính năng nổi bật:

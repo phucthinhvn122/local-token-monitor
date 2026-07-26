@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CompatibleQuotaAdapter,
+  PublicQuotaPublisher,
   parseExplicitQuotaBody,
   parseNttCodexAccountKeys,
   parseQuotaHeaders,
   parseResetAt,
-  parseUsageBody
+  parseUsageBody,
+  sanitizedPublicQuotaPayload
 } from "@ltm/provider-quota";
 import type { ThirdPartyProviderConfig } from "@ltm/shared-types";
 
@@ -304,5 +306,53 @@ describe("direct quota fetch safety", () => {
     expect(snapshot.status).toBe("error");
     expect(snapshot.error).toContain("1 MB");
     delete process.env.TEST_PROVIDER_KEY;
+  });
+});
+
+describe("public quota relay", () => {
+  const snapshot = parseNttCodexAccountKeys({
+    keys: [{
+      name: "must-not-leave-the-machine",
+      api_key: "sk-never-publish",
+      daily_token_limit: 100_000_000,
+      used_today: 1_270_394,
+      used_month: 2_500_000
+    }]
+  }, now);
+
+  it("derives a three-field monthly payload without provider identity or credentials", () => {
+    const payload = sanitizedPublicQuotaPayload(snapshot, 100_000_000);
+    expect(payload).toEqual({
+      limit: 100_000_000,
+      used: 2_500_000,
+      observedAt: now.toISOString()
+    });
+    expect(Object.keys(payload ?? {})).toEqual(["limit", "used", "observedAt"]);
+    expect(JSON.stringify(payload)).not.toContain("nttcodex");
+    expect(JSON.stringify(payload)).not.toContain("sk-never-publish");
+  });
+
+  it("publishes once with no redirects and never places the token in the body", async () => {
+    const request = vi.fn(async () => new Response(null, { status: 202 }));
+    const publisher = new PublicQuotaPublisher({
+      config: {
+        enabled: true,
+        endpoint: "https://quota.example.test/api/quota",
+        publishToken: "writer-secret-with-enough-length",
+        monthlyLimit: 100_000_000
+      },
+      fetcher: request as unknown as typeof fetch
+    });
+    await expect(publisher.publish(snapshot)).resolves.toBe(true);
+    expect(request).toHaveBeenCalledTimes(1);
+    const [endpoint, options] = request.mock.calls[0] as unknown as [string, RequestInit];
+    expect(endpoint).toBe("https://quota.example.test/api/quota");
+    expect(options.redirect).toBe("error");
+    expect(JSON.parse(String(options.body))).toEqual({
+      limit: 100_000_000,
+      used: 2_500_000,
+      observedAt: now.toISOString()
+    });
+    expect(String(options.body)).not.toContain("writer-secret");
   });
 });

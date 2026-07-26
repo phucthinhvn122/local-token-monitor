@@ -22,5 +22,6 @@
       "@ltm/token-estimator": ["packages/token-estimator/src/index.ts"]
     }
   },
-  "include": ["apps", "packages", "tests"]
+  "include": ["apps", "packages", "tests"],
+  "exclude": ["apps/public-relay"]
 }

@@ -16,6 +16,7 @@ import {
   fetchAntigravityQuotaStatus,
   fetchNxtCodexQuotaStatus,
   NttCodexBrowserBridge,
+  PublicQuotaPublisher,
   providerResearch
 } from "@ltm/provider-quota";
 import { safeError } from "@ltm/core";
@@ -110,8 +111,9 @@ export async function startServer(options: { port?: number; host?: string; openB
     const payload = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
     for (const client of clients) client.raw.write(payload);
   };
+  const publicQuotaPublisher = await PublicQuotaPublisher.fromRuntime();
   const nttcodexBrowser = new NttCodexBrowserBridge({
-    onSnapshot: (snapshot) => {
+    onSnapshot: async (snapshot) => {
       database.saveProviderQuotaSnapshot(snapshot);
       publish({
         type: "provider-quota",
@@ -119,6 +121,7 @@ export async function startServer(options: { port?: number; host?: string; openB
         message: `NTTCodex: ${snapshot.status}`,
         timestamp: snapshot.fetchedAt
       });
+      await publicQuotaPublisher.publish(snapshot);
     }
   });
   const customPaths = [...settings.customProviderPaths, ...settings.customLogPaths];
@@ -297,6 +300,7 @@ export async function startServer(options: { port?: number; host?: string; openB
     };
   });
   app.get("/api/third-party/providers/nttcodex/browser", async () => nttcodexBrowser.status());
+  app.get("/api/public-relay/status", async () => publicQuotaPublisher.status());
   app.post("/api/third-party/providers/nttcodex/browser/connect", async (request, reply) => {
     if (host !== "127.0.0.1") {
       return reply.code(403).send({ error: "Browser connection is available only on the local-only server." });
@@ -535,6 +539,8 @@ export async function startServer(options: { port?: number; host?: string; openB
     collectorError = safeError(error);
     app.log.warn({ error: collectorError }, "Collector manager degraded");
   });
+  const previousNttCodexSnapshot = database.providerQuotaSnapshot("nttcodex");
+  if (previousNttCodexSnapshot) void publicQuotaPublisher.publish(previousNttCodexSnapshot);
 
   return { app, url: `http://${host}:${port}`, database };
 }

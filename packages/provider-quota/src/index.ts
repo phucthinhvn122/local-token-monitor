@@ -21,6 +21,19 @@ export {
 } from "./nttcodex-browser.js";
 
 export {
+  DEFAULT_PUBLIC_MONTHLY_LIMIT,
+  PublicQuotaPublisher,
+  parsePublicQuotaRelayConfig,
+  publicQuotaRelayConfigPath,
+  readPublicQuotaRelayConfig,
+  sanitizedPublicQuotaPayload,
+  type PublicQuotaPayload,
+  type PublicQuotaPublisherOptions,
+  type PublicQuotaRelayConfig,
+  type PublicQuotaRelayStatus
+} from "./public-relay.js";
+
+export {
   discoverAntigravityAuthTokens,
   discoverCodexAuthTokens,
   fetchAntigravityQuotaStatus,
