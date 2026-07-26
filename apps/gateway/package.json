@@ -1,0 +1,27 @@
+{
+  "name": "@cgw/gateway",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsup",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@cgw/core": "*",
+    "@cgw/db": "*",
+    "@cgw/shared": "*",
+    "@cgw/token-estimator": "*",
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.0.1",
+    "@prisma/client": "^6.3.0",
+    "fastify": "^5.4.0",
+    "fastify-plugin": "^5.1.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0"
+  }
+}

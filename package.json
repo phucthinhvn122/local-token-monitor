@@ -1,94 +1,46 @@
 {
-  "name": "local-token-monitor",
-  "version": "0.1.0",
-  "description": "Privacy-first local token usage dashboard for Codex and Claude Code",
+  "name": "codex-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted OpenAI-compatible gateway with API key and token quota management for Codex CLI",
   "license": "MIT",
-  "keywords": [
-    "codex",
-    "claude-code",
-    "token-usage",
-    "local-dashboard",
-    "privacy"
-  ],
-  "publishConfig": {
-    "access": "public"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/phucthinhvn122/local-token-monitor.git"
   },
-  "homepage": "https://github.com/phucthinhvn122/local-token-monitor#readme",
-  "bugs": {
-    "url": "https://github.com/phucthinhvn122/local-token-monitor/issues"
-  },
-  "type": "module",
-  "private": false,
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
-  "bin": {
-    "local-token-monitor": "./dist/cli.js"
-  },
-  "files": [
-    "dist",
-    "apps/web/dist",
-    "docs/dashboard.png",
-    "packages/database/src/migrations"
-  ],
   "engines": {
     "node": ">=22.13"
   },
+  "workspaces": [
+    "apps/gateway",
+    "apps/web",
+    "packages/core",
+    "packages/db",
+    "packages/shared",
+    "packages/token-estimator"
+  ],
   "scripts": {
-    "dev": "concurrently -k -n api,web -c cyan,magenta \"cross-env LTM_PORT=3457 LTM_DEV=true tsx watch apps/server/src/run-server.ts\" \"vite --config apps/web/vite.config.ts\"",
-    "build": "npm run typecheck && npm run build:web && npm run build:server",
-    "build:web": "vite build --config apps/web/vite.config.ts",
-    "build:server": "tsup --config tsup.config.ts && node scripts/copy-assets.mjs",
-    "start": "node dist/server.js",
+    "dev": "concurrently -k -n gateway,web -c cyan,magenta \"npm run dev -w @cgw/gateway\" \"npm run dev -w @cgw/web\"",
+    "build": "npm run db:generate && npm run build -w @cgw/gateway && npm run build -w @cgw/web",
+    "start": "node apps/gateway/dist/main.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
-    "format": "prettier --write .",
-    "db:migrate": "tsx packages/database/src/migrate.ts",
-    "doctor": "tsx apps/server/src/cli.ts doctor",
-    "prepare": "npm run build"
-  },
-  "dependencies": {
-    "@fastify/cors": "^11.0.1",
-    "@fastify/static": "^10.1.2",
-    "@sinclair/typebox": "^0.34.40",
-    "@tanstack/react-query": "^5.83.0",
-    "chokidar": "^4.0.3",
-    "fastify": "^5.4.0",
-    "lucide-react": "^0.468.0",
-    "open": "^10.1.2",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "recharts": "^3.1.0",
-    "systeminformation": "^5.27.7",
-    "zod": "^3.25.76"
+    "db:generate": "prisma generate --schema packages/db/prisma/schema.prisma",
+    "db:migrate": "prisma migrate deploy --schema packages/db/prisma/schema.prisma",
+    "db:migrate:dev": "prisma migrate dev --schema packages/db/prisma/schema.prisma",
+    "db:seed": "tsx packages/db/src/seed.ts",
+    "db:studio": "prisma studio --schema packages/db/prisma/schema.prisma",
+    "format": "prettier --write ."
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
     "@types/node": "^24.1.0",
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^4.7.0",
     "concurrently": "^9.2.0",
-    "cross-env": "^10.0.0",
-    "eslint": "^10.8.0",
-    "eslint-plugin-react-hooks": "^7.1.1",
-    "eslint-plugin-react-refresh": "^0.4.20",
     "prettier": "^3.6.2",
+    "prisma": "^6.3.0",
     "tsx": "^4.20.3",
-    "tsup": "^8.5.0",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.38.0",
-    "vite": "^7.0.6",
     "vitest": "^3.2.4"
-  },
-  "overrides": {
-    "esbuild": "^0.28.1"
   }
 }
