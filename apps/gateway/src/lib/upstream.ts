@@ -117,7 +117,9 @@ export async function probeProvider(options: {
       ok: true,
       statusCode: response.status,
       latencyMs,
-      message: models?.length ? `Reachable — ${models.length} models advertised` : "Reachable",
+      message: models?.length
+        ? `Reachable — ${models.length} model${models.length === 1 ? "" : "s"} advertised`
+        : "Reachable",
       models: models?.slice(0, 100)
     };
   } catch (error) {
