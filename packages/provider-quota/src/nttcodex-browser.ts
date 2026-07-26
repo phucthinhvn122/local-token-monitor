@@ -530,19 +530,77 @@ export class NttCodexBrowserBridge {
       try { body = await response.json(); } catch {}
       return { status: response.status, body };
     })()`;
-    const evaluation = await this.client.send("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-      allowUnsafeEvalBlockedByCSP: true
-    });
-    const remoteResult = record(evaluation.result);
-    const value = record(remoteResult?.value);
-    const status = finiteNonnegative(value?.status);
-    if (status === undefined) {
-      const exception = record(evaluation.exceptionDetails);
-      throw new Error(exception ? "The NTTCodex page blocked the quota request." : "The browser returned an invalid quota result.");
+    try {
+      const evaluation = await this.client.send("Runtime.evaluate", {
+        expression,
+        awaitPromise: true,
+        returnByValue: true,
+        allowUnsafeEvalBlockedByCSP: true
+      });
+      const remoteResult = record(evaluation.result);
+      const value = record(remoteResult?.value);
+      const status = finiteNonnegative(value?.status);
+      if (status !== undefined) return { status, body: value?.body };
+    } catch {
+      // A page may still be creating its default JavaScript context.
     }
-    return { status, body: value?.body };
+    return this.loadAccountKeysResource();
+  }
+
+  private async loadAccountKeysResource(): Promise<{ status: number; body: unknown }> {
+    if (!this.client?.isOpen) throw new Error("The NTTCodex browser window was closed.");
+    try {
+      const frameTreeResponse = await this.client.send("Page.getFrameTree");
+      const frameTree = record(frameTreeResponse.frameTree);
+      const frame = record(frameTree?.frame);
+      const frameId = typeof frame?.id === "string" ? frame.id : undefined;
+      if (!frameId) throw new Error("The browser page frame is unavailable.");
+      const loaded = await this.client.send("Network.loadNetworkResource", {
+        frameId,
+        url: NTTCODEX_KEYS_URL,
+        options: {
+          disableCache: true,
+          includeCredentials: true
+        }
+      });
+      const resource = record(loaded.resource);
+      const status = finiteNonnegative(resource?.httpStatusCode);
+      if (!resource?.success || status === undefined) {
+        throw new Error("The browser could not load the quota resource.");
+      }
+
+      let text = typeof resource.content === "string" ? resource.content : "";
+      const stream = typeof resource.stream === "string" ? resource.stream : undefined;
+      if (!text && stream) {
+        const chunks: Buffer[] = [];
+        let totalBytes = 0;
+        try {
+          while (true) {
+            const chunk = await this.client.send("IO.read", { handle: stream, size: 64 * 1024 });
+            const data = typeof chunk.data === "string" ? chunk.data : "";
+            const bytes = chunk.base64Encoded
+              ? Buffer.from(data, "base64")
+              : Buffer.from(data, "utf8");
+            totalBytes += bytes.byteLength;
+            if (totalBytes > 1_000_000) throw new Error("The quota response exceeded 1 MB.");
+            chunks.push(bytes);
+            if (chunk.eof === true) break;
+          }
+        } finally {
+          await this.client.send("IO.close", { handle: stream }).catch(() => undefined);
+        }
+        text = Buffer.concat(chunks).toString("utf8");
+      }
+
+      if (!text) return { status, body: null };
+      try {
+        return { status, body: JSON.parse(text) };
+      } catch {
+        // A signed-out resource load commonly redirects to an HTML login page.
+        return { status: status === 200 ? 401 : status, body: null };
+      }
+    } catch (error) {
+      throw new Error("The NTTCodex page blocked the quota request.", { cause: error });
+    }
   }
 }
